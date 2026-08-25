@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Forward HTTP request options, including custom Finch pools, to the Electric client.
 - Handle empty sandbox transactions and PostgreSQL range values without crashing.
 - Expose Electric's `electric-has-data` and `retry-after` response headers through CORS.
+- Serve Ecto string predicates through `sync_render/3` without operator-overload errors.
 
 ## [0.6.1] - 2025-10-13
 

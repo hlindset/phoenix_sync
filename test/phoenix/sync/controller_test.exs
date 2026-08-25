@@ -25,6 +25,29 @@ defmodule Phoenix.Sync.ControllerTest do
 
   require Phoenix.ConnTest
 
+  defmodule Project do
+    use Ecto.Schema
+
+    schema "projects" do
+      field :type, :string
+    end
+  end
+
+  defmodule PredicateController do
+    use Phoenix.Controller, formats: [:html, :json]
+
+    import Phoenix.Sync.Controller
+    import Ecto.Query, only: [from: 2]
+
+    def string(conn, params) do
+      sync_render(conn, params, from(project in Project, where: project.type == "open"))
+    end
+
+    def invalid(conn, params) do
+      sync_render(conn, params, table: "projects", where: "missing = 'open'")
+    end
+  end
+
   defmodule Router do
     use Phoenix.Router
 
@@ -48,6 +71,9 @@ defmodule Phoenix.Sync.ControllerTest do
       get "/transform-interruptible", TodoController, :transform_interruptible
       get "/transform-ecto-schema", TodoController, :transform_organization
     end
+
+    get "/string-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :string
+    get "/invalid-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :invalid
   end
 
   defmodule Endpoint do
@@ -155,6 +181,52 @@ defmodule Phoenix.Sync.ControllerTest do
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}},
                %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
+           "projects",
+           [
+             "id int8 not null primary key generated always as identity",
+             "type text not null"
+           ]
+         }
+    @tag data: {"projects", ["type"], [["open"], ["closed"]]}
+    test "supports Ecto string predicates", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/string-predicate", %{offset: "-1"})
+
+      assert resp.status == 200
+
+      assert [
+               %{
+                 "headers" => %{"operation" => "insert"},
+                 "value" => %{"type" => "open"}
+               },
+               %{"headers" => %{"control" => "snapshot-end"}}
+             ] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
+           "projects",
+           [
+             "id int8 not null primary key generated always as identity",
+             "type text not null"
+           ]
+         }
+    @tag data: {"projects", ["type"], [["open"]]}
+    test "returns Electric predicate errors instead of raising", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/invalid-predicate", %{offset: "-1"})
+
+      assert resp.status == 400
+
+      assert %{"message" => message, "errors" => %{"where" => error}} =
+               Jason.decode!(resp.resp_body)
+
+      assert message in ["Invalid shape definition", "Invalid request"]
+      assert List.wrap(error) |> Enum.join(" ") =~ "unknown reference missing"
     end
 
     test "allows for ecto queries", _ctx do

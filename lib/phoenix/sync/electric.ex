@@ -594,9 +594,40 @@ defmodule Phoenix.Sync.Electric do
       # The client adapter just configures the client with the shape
       # parameters, which can't error.
       {:error, response} ->
-        conn
-        |> Plug.Conn.send_resp(response.status, Enum.into(response.body, []))
+        send_predefined_shape_error(conn, response)
     end
+  end
+
+  if @electric_available? do
+    defp send_predefined_shape_error(conn, %Electric.Shapes.Api.Response{} = response) do
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Electric.Shapes.Api.Response.send(response)
+      |> Plug.Conn.halt()
+    end
+  end
+
+  defp send_predefined_shape_error(conn, %{status: status, body: body}) do
+    conn
+    |> Plug.Conn.send_resp(status, Enum.into(body, []))
+    |> Plug.Conn.halt()
+  end
+
+  defp send_predefined_shape_error(conn, {field, message})
+       when (is_atom(field) or is_binary(field)) and is_binary(message) do
+    body = %{message: "Invalid shape definition", errors: %{field => message}}
+
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(400, @json.encode_to_iodata!(body))
+    |> Plug.Conn.halt()
+  end
+
+  defp send_predefined_shape_error(conn, message) when is_binary(message) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(400, @json.encode_to_iodata!(%{message: message}))
+    |> Plug.Conn.halt()
   end
 
   @subset_body_keys ~w(where order_by limit offset params where_expr order_by_expr)
