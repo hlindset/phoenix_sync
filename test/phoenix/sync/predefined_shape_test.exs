@@ -23,6 +23,35 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
     end
   end
 
+  defmodule Board do
+    use Ecto.Schema
+
+    schema "boards" do
+      field :active, :boolean
+    end
+  end
+
+  defmodule Episode do
+    use Ecto.Schema
+
+    schema "episodes" do
+      field :board_id, :integer
+      field :published, :boolean
+      field :title, :string
+      belongs_to :board, Board, define_field: false
+    end
+  end
+
+  defmodule Membership do
+    use Ecto.Schema
+
+    schema "board_memberships" do
+      field :board_id, :integer
+      field :user_id, :string
+      field :role, Ecto.Enum, values: [:viewer, :editor]
+    end
+  end
+
   describe "new!/2" do
     test "raises if passed unknown options" do
       assert_raise ArgumentError, fn ->
@@ -175,6 +204,86 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert shape.where =~ ~s|("breed"::text)|
       assert shape.where =~ ~s|'"breed"'|
+    end
+
+    test "converts inner equi-joins into relationship subqueries" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          join: membership in Membership,
+          on: board.id == membership.board_id,
+          where: episode.published == true,
+          where: board.active == true,
+          where: membership.user_id == ^"user-1",
+          where: membership.role == :editor,
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.table == "episodes"
+      assert shape.columns == ["id", "board_id", "published", "title"]
+      assert shape.where =~ ~s|("published" = TRUE)|
+
+      assert shape.where =~
+               ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE|
+
+      assert shape.where =~ ~s|("active" = TRUE)|
+
+      assert shape.where =~
+               ~s|"id" IN (SELECT "board_id" FROM "board_memberships" WHERE|
+
+      assert shape.where =~ ~s|("user_id" = 'user-1')|
+      assert shape.where =~ ~s|(("role"::text) = 'editor')|
+    end
+
+    test "converts Ecto association joins into relationship subqueries" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in assoc(episode, :board),
+          where: board.active == true,
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE ("active" = TRUE))|
+    end
+
+    test "rejects join predicates that compare data beyond the relationship key" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          where: episode.published == board.active
+
+      assert_raise ArgumentError, ~r/predicate references multiple Ecto bindings/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
+    test "rejects query operations that cannot remain correct as a live shape" do
+      import Ecto.Query
+
+      queries = [
+        from(episode in Episode, order_by: episode.title),
+        from(episode in Episode, limit: 10),
+        from(episode in Episode, preload: [:board]),
+        from(episode in Episode, group_by: episode.board_id, select: episode.board_id),
+        from(episode in Episode, select: count(episode.id))
+      ]
+
+      for query <- queries do
+        assert_raise ArgumentError, ~r/cannot be represented by an Electric shape/, fn ->
+          query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+        end
+      end
     end
 
     test "changeset function plus opts" do

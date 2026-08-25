@@ -41,6 +41,38 @@ defmodule Phoenix.Sync.ControllerTest do
     end
   end
 
+  defmodule Board do
+    use Ecto.Schema
+
+    @primary_key {:id, :string, []}
+
+    schema "boards" do
+      field :active, :boolean
+    end
+  end
+
+  defmodule Episode do
+    use Ecto.Schema
+
+    @primary_key {:id, :string, []}
+
+    schema "episodes" do
+      field :board_id, :string
+      field :title, :string
+    end
+  end
+
+  defmodule Membership do
+    use Ecto.Schema
+
+    @primary_key {:id, :string, []}
+
+    schema "board_memberships" do
+      field :board_id, :string
+      field :user_id, :string
+    end
+  end
+
   defmodule PredicateController do
     use Phoenix.Controller, formats: [:html, :json]
 
@@ -58,6 +90,20 @@ defmodule Phoenix.Sync.ControllerTest do
     def enum(conn, params) do
       statuses = ["pending", "running", "paused"]
       sync_render(conn, params, from(todo in EnumTodo, where: todo.status in ^statuses))
+    end
+
+    def relationship(conn, %{"user_id" => user_id} = params) do
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          join: membership in Membership,
+          on: board.id == membership.board_id,
+          where: board.active == true,
+          where: membership.user_id == ^user_id,
+          select: episode
+
+      sync_render(conn, params, query)
     end
   end
 
@@ -88,6 +134,10 @@ defmodule Phoenix.Sync.ControllerTest do
     get "/string-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :string
     get "/invalid-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :invalid
     get "/enum-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :enum
+
+    get "/relationship-join",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :relationship
   end
 
   defmodule Endpoint do
@@ -154,6 +204,7 @@ defmodule Phoenix.Sync.ControllerTest do
     :with_table,
     :with_data,
     :with_enum_data,
+    :with_relationship_tables,
     :start_embedded,
     :configure_endpoint
   ]
@@ -181,6 +232,48 @@ defmodule Phoenix.Sync.ControllerTest do
   end
 
   defp with_enum_data(_ctx), do: :ok
+
+  defp with_relationship_tables(%{relationship: true, db_conn: db_conn}) do
+    Postgrex.query!(
+      db_conn,
+      "CREATE TABLE boards (id text PRIMARY KEY, active boolean NOT NULL)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "CREATE TABLE episodes (id text PRIMARY KEY, board_id text NOT NULL, title text NOT NULL)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "CREATE TABLE board_memberships (id text PRIMARY KEY, board_id text NOT NULL, user_id text NOT NULL)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO boards (id, active) VALUES ('board-1', true), ('board-2', true), ('board-3', false)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO episodes (id, board_id, title) VALUES ('episode-1', 'board-1', 'mine'), ('episode-2', 'board-2', 'theirs'), ('episode-3', 'board-3', 'inactive')",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO board_memberships (id, board_id, user_id) VALUES ('membership-1', 'board-1', 'user-1'), ('membership-2', 'board-2', 'user-2'), ('membership-3', 'board-3', 'user-1')",
+      []
+    )
+
+    :ok
+  end
+
+  defp with_relationship_tables(_ctx), do: :ok
 
   describe "phoenix: sync_render/3" do
     test "returns the shape data", _ctx do
@@ -290,6 +383,25 @@ defmodule Phoenix.Sync.ControllerTest do
                %{"headers" => %{"operation" => "insert"}, "value" => %{"status" => "running"}},
                %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag relationship: true
+    test "supports Ecto relationship joins", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/relationship-join", %{offset: "-1", user_id: "user-1"})
+
+      assert resp.status == 200
+
+      assert [
+               %{
+                 "headers" => %{"operation" => "insert", "tags" => [_ | _]},
+                 "value" => %{"title" => "mine"}
+               }
+             ] =
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
     end
 
     test "allows for ecto queries", _ctx do

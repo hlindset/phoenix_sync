@@ -426,10 +426,30 @@ Or using a schema (equivalent to `from(t in Todos.Todo)`):
 sync_render(conn, params, Todos.Todo)
 ```
 
-Ecto query support is currently limited to `where` conditions. Use a keyword
-shape with a native Electric `where` expression for relationship subqueries.
-Ordering and limiting an initial result set are available through subset
-snapshots, described below.
+Ecto queries support root-table `where` conditions and inner equi-joins. A join
+must compare one field on the new binding with one field on an earlier binding,
+and each additional predicate must reference only one binding. Phoenix.Sync
+converts these joins into Electric relationship subqueries, including nested
+joins and `assoc/2` joins:
+
+```elixir
+from episode in Episode,
+  join: board in assoc(episode, :board),
+  join: membership in Membership,
+  on: board.id == membership.board_id,
+  where: board.active == true,
+  where: membership.user_id == ^user_id,
+  select: episode
+```
+
+The result remains a live set of `Episode` rows. Joined rows are used to decide
+membership but are not returned as a joined tuple or preloaded association
+graph.
+
+`order_by`, `limit`, `offset`, `group_by`, aggregates, distinct results, and
+preloads cannot remain correct as a row-level Electric shape and are rejected
+instead of being silently ignored. Ordering and limiting initial data are
+available through subset snapshots, described below.
 
 The static shapes defined using the `sync/2` or `sync/3` router macros do not accept `Ecto.Query` structs as a shape definition. This is to avoid excessive recompilation caused by your router having a compile-time dependency on your `Ecto` schemas.
 

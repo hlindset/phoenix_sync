@@ -370,59 +370,12 @@ defmodule Phoenix.Sync.PredefinedShape do
     # router modules
     defp to_shape_definition(%__MODULE__{query: queryable, shape_config: shape_config}) do
       try do
-        queryable
-        |> Electric.Client.EctoAdapter.shape!(shape_config)
-        |> cast_string_enum_columns(queryable)
+        Phoenix.Sync.EctoShape.shape!(queryable, shape_config)
       rescue
         e in Protocol.UndefinedError ->
           raise ArgumentError,
             message: "Invalid query `#{inspect(queryable)}`: #{e.description}"
       end
-    end
-
-    defp cast_string_enum_columns(%ShapeDefinition{where: nil} = shape, _queryable), do: shape
-
-    defp cast_string_enum_columns(%ShapeDefinition{} = shape, queryable) do
-      case ecto_schema(queryable) do
-        nil ->
-          shape
-
-        schema ->
-          enum_columns =
-            schema.__schema__(:fields)
-            |> Enum.filter(&(schema.__schema__(:type, &1) |> string_enum?()))
-            |> Enum.map(&(schema.__schema__(:field_source, &1) |> to_string()))
-
-          %{shape | where: cast_quoted_columns(shape.where, enum_columns)}
-      end
-    end
-
-    defp ecto_schema(schema) when is_atom(schema) do
-      if is_queryable?(schema), do: schema
-    end
-
-    defp ecto_schema(%Ecto.Query{from: %{source: {_table, schema}}}), do: schema
-    defp ecto_schema(%Ecto.Changeset{data: %{__struct__: schema}}), do: schema
-    defp ecto_schema(_queryable), do: nil
-
-    defp string_enum?({:parameterized, {Ecto.Enum, %{type: :string}}}), do: true
-    defp string_enum?(_type), do: false
-
-    defp cast_quoted_columns(where, []), do: where
-
-    defp cast_quoted_columns(where, columns) do
-      ~r/('(?:''|[^'])*')/
-      |> Regex.split(where, include_captures: true)
-      |> Enum.map_join(fn
-        <<"'", _::binary>> = literal ->
-          literal
-
-        sql ->
-          Enum.reduce(columns, sql, fn column, sql ->
-            quoted_column = ~s|"#{String.replace(column, ~s|"|, ~s|""|)}"|
-            String.replace(sql, quoted_column, "(#{quoted_column}::text)")
-          end)
-      end)
     end
   end
 
