@@ -10,6 +10,15 @@ defmodule Phoenix.Sync.PredefinedShape do
     storage: [type: {:or, [:map, nil]}]
   ]
 
+  @server_schema_opts [
+    log: [
+      type: {:or, [nil, {:in, [:full, :changes_only]}]},
+      default: nil,
+      doc: "The Electric log mode for this shape.",
+      type_doc: ~s/`:full` | `:changes_only`/
+    ]
+  ]
+
   @sync_schema_opts [
     transform: [
       type: {:or, [:mfa, {:fun, 1}, :atom]},
@@ -37,11 +46,15 @@ defmodule Phoenix.Sync.PredefinedShape do
 
   @shape_schema NimbleOptions.new!(@shape_definition_schema)
   @api_schema NimbleOptions.new!(@api_schema_opts)
+  @server_schema NimbleOptions.new!(@server_schema_opts)
   @stream_schema Electric.Client.Stream.options_schema()
-  @public_schema NimbleOptions.new!(@shape_definition_schema ++ @api_schema_opts)
+  @public_schema NimbleOptions.new!(
+                   @shape_definition_schema ++ @server_schema_opts ++ @api_schema_opts
+                 )
   @sync_schema NimbleOptions.new!(@sync_schema_opts)
 
   @api_schema_keys Keyword.keys(@api_schema_opts)
+  @server_schema_keys Keyword.keys(@server_schema_opts)
   @stream_schema_keys Keyword.keys(@stream_schema.schema)
   @shape_definition_keys ShapeDefinition.public_keys()
   @sync_schema_keys Keyword.keys(@sync_schema_opts)
@@ -51,6 +64,7 @@ defmodule Phoenix.Sync.PredefinedShape do
   # than compile time.
   defstruct [
     :shape_config,
+    :server_config,
     :api_config,
     :stream_config,
     :query,
@@ -111,13 +125,14 @@ defmodule Phoenix.Sync.PredefinedShape do
   defp new(opts), do: struct(__MODULE__, opts)
 
   defp split_and_validate_opts!(opts, mode) do
-    {shape_config, api_config, stream_config, sync_config} =
+    {shape_config, server_config, api_config, stream_config, sync_config} =
       opts
       |> split_opts!()
       |> validate_opts!(mode)
 
     [
       shape_config: shape_config,
+      server_config: server_config,
       api_config: api_config,
       stream_config: stream_config,
       sync_config: sync_config
@@ -126,6 +141,7 @@ defmodule Phoenix.Sync.PredefinedShape do
 
   defp split_opts!(opts) do
     {shape_opts, other_opts} = Keyword.split(opts, @shape_definition_keys)
+    {server_opts, other_opts} = Keyword.split(other_opts, @server_schema_keys)
     {api_opts, other_opts} = Keyword.split(other_opts, @api_schema_keys)
     {sync_opts, other_opts} = Keyword.split(other_opts, @sync_schema_keys)
 
@@ -139,11 +155,12 @@ defmodule Phoenix.Sync.PredefinedShape do
             message: "received invalid options to a shape definition: #{inspect(invalid_opts)}"
       end
 
-    {shape_opts, api_opts, stream_opts, sync_opts}
+    {shape_opts, server_opts, api_opts, stream_opts, sync_opts}
   end
 
-  defp validate_opts!({shape_opts, api_opts, stream_opts, sync_opts}, mode) do
+  defp validate_opts!({shape_opts, server_opts, api_opts, stream_opts, sync_opts}, mode) do
     shape_config = validate_shape_config(shape_opts, mode)
+    server_config = NimbleOptions.validate!(server_opts, @server_schema)
     api_config = NimbleOptions.validate!(api_opts, @api_schema)
     sync_config = NimbleOptions.validate!(sync_opts, @sync_schema)
 
@@ -155,7 +172,7 @@ defmodule Phoenix.Sync.PredefinedShape do
       |> Enum.reject(&is_nil(elem(&1, 1)))
       |> Enum.reject(&(elem(&1, 0) == :replica))
 
-    {shape_config, api_config, stream_config, sync_config}
+    {shape_config, server_config, api_config, stream_config, sync_config}
   end
 
   # If we're defining a shape with a keyword list then we need at least the
@@ -253,24 +270,34 @@ defmodule Phoenix.Sync.PredefinedShape do
 
   @doc false
   def to_client_params(%__MODULE__{} = predefined_shape) do
-    predefined_shape
-    |> to_shape_definition()
-    |> ShapeDefinition.params()
+    shape_params =
+      predefined_shape
+      |> to_shape_definition()
+      |> ShapeDefinition.params()
+
+    Map.merge(shape_params, server_http_params(predefined_shape))
   end
 
   @doc false
   def to_api_params(%__MODULE__{} = predefined_shape) do
-    predefined_shape
-    |> to_shape_definition()
-    |> ShapeDefinition.params(format: :keyword)
+    shape_params =
+      predefined_shape
+      |> to_shape_definition()
+      |> ShapeDefinition.params(format: :keyword)
+
+    shape_params
+    |> Keyword.merge(server_api_params(predefined_shape))
     |> Keyword.merge(predefined_shape.api_config)
   end
 
   @doc false
   def to_shape_params(%__MODULE__{} = predefined_shape) do
-    predefined_shape
-    |> to_shape_definition()
-    |> ShapeDefinition.params(format: :keyword)
+    shape_params =
+      predefined_shape
+      |> to_shape_definition()
+      |> ShapeDefinition.params(format: :keyword)
+
+    Keyword.merge(shape_params, server_api_params(predefined_shape))
   end
 
   @doc false
@@ -281,6 +308,20 @@ defmodule Phoenix.Sync.PredefinedShape do
   @doc false
   def to_stream_params(%__MODULE__{} = predefined_shape) do
     {to_shape_definition(predefined_shape), predefined_shape.stream_config}
+  end
+
+  defp server_http_params(%__MODULE__{server_config: server_config}) do
+    case server_config[:log] do
+      nil -> %{}
+      log -> %{"log" => Atom.to_string(log)}
+    end
+  end
+
+  defp server_api_params(%__MODULE__{server_config: server_config}) do
+    case server_config[:log] do
+      nil -> []
+      log -> [log_mode: log]
+    end
   end
 
   defp to_shape_definition(%__MODULE__{query: nil, shape_config: shape_config}) do

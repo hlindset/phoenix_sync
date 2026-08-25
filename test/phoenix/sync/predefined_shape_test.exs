@@ -40,6 +40,7 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
         [table: "here", columns: :invalid],
         [table: "here", namespace: :invalid],
         [table: "here", where: :invalid],
+        [table: "here", log: :invalid],
         [table: "here", live: :invalid],
         [table: "here", errors: :invalid]
       ]
@@ -81,6 +82,21 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                  columns: ["id", "title"],
                  storage: %{compaction: :disabled}
                )
+    end
+
+    test "converts changes-only log mode for HTTP and embedded APIs" do
+      ps = PredefinedShape.new!(table: "todos", log: :changes_only)
+
+      assert PredefinedShape.to_client_params(ps) == %{
+               "log" => "changes_only",
+               "table" => "todos"
+             }
+
+      assert PredefinedShape.to_api_params(ps) |> Enum.sort() ==
+               Enum.sort(table: "todos", log_mode: :changes_only)
+
+      assert PredefinedShape.to_shape_params(ps) |> Enum.sort() ==
+               Enum.sort(table: "todos", log_mode: :changes_only)
     end
 
     test "accepts Ecto schema" do

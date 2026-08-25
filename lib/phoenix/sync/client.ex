@@ -126,21 +126,22 @@ defmodule Phoenix.Sync.Client do
   def stream(shape, []) when is_list(shape) do
     {client, shape} = Keyword.pop_lazy(shape, :client, &new!/0)
 
-    {shape, shape_stream_opts} = resolve_shape(shape, [])
+    {client, shape, shape_stream_opts} = resolve_shape(client, shape, [])
 
     Electric.Client.stream(client, shape, shape_stream_opts)
   end
 
   def stream(shape, stream_opts) when not is_list(shape) and is_list(stream_opts) do
     {client, stream_opts} = Keyword.pop_lazy(stream_opts, :client, &new!/0)
-    {shape, shape_stream_opts} = resolve_shape(shape, stream_opts)
+    {client, shape, shape_stream_opts} = resolve_shape(client, shape, stream_opts)
 
     Electric.Client.stream(client, shape, shape_stream_opts)
   end
 
-  defp resolve_shape(shape, stream_opts) do
-    shape
-    |> PredefinedShape.new!(stream_opts)
-    |> Phoenix.Sync.PredefinedShape.to_stream_params()
+  defp resolve_shape(client, shape, stream_opts) do
+    predefined_shape = PredefinedShape.new!(shape, stream_opts)
+    {shape, shape_stream_opts} = PredefinedShape.to_stream_params(predefined_shape)
+
+    {PredefinedShape.client(client, predefined_shape), shape, shape_stream_opts}
   end
 end

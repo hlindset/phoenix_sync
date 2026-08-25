@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Support `log: :changes_only` on predefined shapes and `offset=now` stream requests.
 - Support Electric subset parameters for GET and POST shape requests.
 
 ### Changed

@@ -74,4 +74,30 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
     assert request.params["subset__params"] == ["one"]
     refute Map.has_key?(request.params, "ignored")
   end
+
+  test "forwards changes-only mode and offset=now for server-defined shapes" do
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "elixir://#{inspect(__MODULE__.Fetch)}",
+        fetch: {MockFetch, parent: self()}
+      )
+
+    adapter = %ClientAdapter{client: client}
+    shape = PredefinedShape.new!("things", log: :changes_only)
+
+    assert {:ok, shape_adapter} =
+             Phoenix.Sync.Adapter.PlugApi.predefined_shape(adapter, shape)
+
+    assert %{status: 200} =
+             Phoenix.Sync.Adapter.PlugApi.call(
+               shape_adapter,
+               conn(:get, "/things"),
+               %{"offset" => "now"}
+             )
+
+    assert_receive {:fetch_request, request}
+
+    assert request.offset == "now"
+    assert request.params["log"] == "changes_only"
+  end
 end

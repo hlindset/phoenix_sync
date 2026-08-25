@@ -444,6 +444,24 @@ You can also include `replica` (see below) in your static shape definitions:
 sync "/incomplete-todos", Todos.Todo, where: "completed = false", replica: :full
 ```
 
+For progressive sync, set `log: :changes_only` on the predefined shape. The
+client can start listening for future changes with `offset=now` and request
+the initial data it needs through subset snapshots:
+
+```elixir
+sync "/episodes", Todos.Episode,
+  where: "board_id = $1",
+  params: ["board-1"],
+  log: :changes_only
+```
+
+```typescript
+const stream = new ShapeStream({
+  url: `/shapes/episodes`,
+  offset: `now`,
+})
+```
+
 For anything else more dynamic, or to use Ecto queries, you should switch from using the `sync` macros in your router to using `sync_render/3` in a controller.
 
 ### Using a keyword list
@@ -458,5 +476,7 @@ The available options are:
 - `where` (optional). Filter to apply to the synced data in SQL format, e.g. `where: "amount < 1.23 AND colour in ('red', 'green')"`.
 - `columns` (optional). The columns to include in the synced data. By default Electric will include all columns in the table. The column list **must** include all primary keys. E.g. `columns: ["id", "title", "amount"]`.
 - `replica` (optional). By default Electric will only send primary keys + changed columns on updates. Set `replica: :full` to receive the full row, not just the changed columns.
+- `log` (optional). Set to `:changes_only` to subscribe without receiving the
+  full initial snapshot. The default is `:full`.
 
 See the [Electric Shapes guide](https://electric-sql.com/docs/guides/shapes) for more information.
