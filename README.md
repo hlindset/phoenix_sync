@@ -482,6 +482,10 @@ The request may narrow, order, or paginate the configured shape, but it cannot
 replace server-controlled options such as its table, base `where` clause,
 `log`, or `queryable_columns`.
 
+When the predefined shape has a `transform`, Phoenix.Sync applies it to every
+row in the subset response's `data` list while preserving Electric's response
+metadata and any additional top-level fields.
+
 For anything else more dynamic, or to use Ecto queries, you should switch from using the `sync` macros in your router to using `sync_render/3` in a controller.
 
 ### Using a keyword list

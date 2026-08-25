@@ -77,6 +77,7 @@ defmodule Phoenix.Sync.RouterTest do
       # sync "/map/keyword-capture", table: "todos", transform: &Phoenix.Sync.RouterTest.map_todo/1
 
       sync "/map/query-mfa", Support.Todo,
+        queryable_columns: ["id", "title", "completed"],
         transform: {Phoenix.Sync.RouterTest, :map_todo, ["query-mfa"]}
 
       sync "/map/keyword-mfa",
@@ -625,6 +626,47 @@ defmodule Phoenix.Sync.RouterTest do
                },
                %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
+           "todos",
+           [
+             "id int8 not null primary key generated always as identity",
+             "title text",
+             "completed boolean default false"
+           ]
+         }
+    @tag data: {
+           "todos",
+           ["title", "completed"],
+           [["one", false], ["two", false]]
+         }
+    @tag transform: true
+    test "mapping values in subset snapshots" do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.put_req_header("content-type", "application/json")
+        |> Phoenix.ConnTest.post(
+          "/sync/map/query-mfa?offset=-1",
+          Jason.encode!(%{"order_by" => "id ASC", "limit" => 1})
+        )
+
+      assert resp.status == 200
+
+      assert %{
+               "data" => [
+                 %{
+                   "headers" => %{"operation" => "insert"},
+                   "value" => %{
+                     "merged" => "query-mfa-insert-1-one",
+                     "title" => "one"
+                   }
+                 }
+               ],
+               "metadata" => metadata
+             } = Jason.decode!(resp.resp_body)
+
+      assert is_map(metadata)
     end
 
     @tag transform: true

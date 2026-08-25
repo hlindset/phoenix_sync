@@ -832,6 +832,11 @@ defmodule Phoenix.Sync.Electric do
     |> then(fn item -> [@json.encode_to_iodata!(item)] end)
   end
 
+  def map_response_body(%{"data" => data} = body, mapper)
+      when is_list(data) and is_function(mapper, 1) do
+    Map.put(body, "data", map_response_body(data, mapper))
+  end
+
   def map_response_body(msgs, mapper) when is_list(msgs) and is_function(mapper, 1) do
     msgs
     |> Enum.flat_map(fn

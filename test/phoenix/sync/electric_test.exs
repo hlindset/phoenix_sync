@@ -88,6 +88,32 @@ defmodule Phoenix.Sync.ElectricTest do
     :configure_endpoint
   ]
 
+  test "transforms subset data without changing response metadata", _ctx do
+    response = %{
+      "metadata" => %{"columns" => [%{"name" => "value", "type" => "text"}]},
+      "data" => [
+        %{
+          "key" => "things/1",
+          "headers" => %{"operation" => "insert"},
+          "value" => %{"value" => "one"}
+        }
+      ],
+      "future-field" => %{"preserved" => true}
+    }
+
+    mapper = fn message ->
+      [put_in(message, ["value", "mapped"], String.upcase(message["value"]["value"]))]
+    end
+
+    assert %{
+             "metadata" => %{
+               "columns" => [%{"name" => "value", "type" => "text"}]
+             },
+             "data" => [%{"value" => %{"value" => "one", "mapped" => "ONE"}}],
+             "future-field" => %{"preserved" => true}
+           } = Phoenix.Sync.Electric.map_response_body(response, mapper)
+  end
+
   defmodule MyEnv.TestRouter do
     use Plug.Router, copy_opts_to_assign: :config
     use Phoenix.Sync.Electric
