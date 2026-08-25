@@ -3,7 +3,7 @@ defmodule Phoenix.Sync.MixProject do
 
   # Remember to update the README when you change the version
   @version "0.6.1"
-  @electric_version ">= 1.1.9 and <= 1.1.10"
+  @electric_version "~> 1.7.12"
 
   def project do
     [
@@ -45,8 +45,10 @@ defmodule Phoenix.Sync.MixProject do
       {:plug, "~> 1.0"},
       {:jason, "~> 1.0"},
       {:ecto_sql, "~> 3.10", optional: true},
-      {:electric, @electric_version, optional: true},
-      {:electric_client, "~> 0.7.2"},
+      # electric_client 0.10.x has not yet published an Electric 1.7-compatible
+      # optional dependency bound. Remove the override once it does.
+      {:electric, @electric_version, optional: true, override: true},
+      {:electric_client, "~> 0.10.3"},
       {:igniter, "~> 0.8.3", optional: true}
     ] ++ deps_for_env(Mix.env()) ++ json_deps()
   end
@@ -134,7 +136,11 @@ defmodule Phoenix.Sync.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   defp test_as_a_dep_embedded(args) do
-    do_test_as_a_dep("tmp/as_a_dep_embedded", [{:electric, "~> 1.0"}], args)
+    do_test_as_a_dep(
+      "tmp/as_a_dep_embedded",
+      [{:electric, @electric_version, override: true}],
+      args
+    )
   end
 
   defp test_as_a_dep_standalone(args) do

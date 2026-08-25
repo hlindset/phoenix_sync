@@ -3,7 +3,8 @@ if Phoenix.Sync.sandbox_enabled?() do
     @moduledoc false
 
     alias Electric.Replication.Changes.{
-      Transaction,
+      TransactionFragment,
+      Commit,
       NewRecord,
       UpdatedRecord,
       DeletedRecord,
@@ -62,7 +63,7 @@ if Phoenix.Sync.sandbox_enabled?() do
       :ok =
         txid
         |> transaction(msgs)
-        |> ShapeLogCollector.store_transaction(ShapeLogCollector.name(stack_id))
+        |> ShapeLogCollector.handle_event(stack_id)
 
       {:noreply, %{state | txid: next_txid}}
     end
@@ -73,22 +74,34 @@ if Phoenix.Sync.sandbox_enabled?() do
       :ok =
         state.txid
         |> transaction(changes)
-        |> ShapeLogCollector.store_transaction(ShapeLogCollector.name(state.stack_id))
+        |> ShapeLogCollector.handle_event(state.stack_id)
 
       {:noreply, %{state | txid: state.txid + 100}}
     end
 
     defp transaction(txid, changes) do
-      %Transaction{
+      now = System.monotonic_time()
+
+      %TransactionFragment{
         xid: txid,
         lsn: Electric.Postgres.Lsn.from_integer(txid),
-        last_log_offset: Enum.at(changes, -1) |> Map.fetch!(:log_offset),
+        last_log_offset: last_log_offset(txid, changes),
+        has_begin?: true,
+        commit: %Commit{
+          commit_timestamp: DateTime.utc_now(),
+          received_at: now,
+          initial_receive_lag: 0,
+          tx_started_at: now,
+          txn_change_count: length(changes)
+        },
         changes: changes,
-        num_changes: length(changes),
-        commit_timestamp: DateTime.utc_now(),
-        affected_relations: Enum.into(changes, MapSet.new(), & &1.relation)
+        affected_relations: MapSet.new(changes, & &1.relation),
+        change_count: length(changes)
       }
     end
+
+    defp last_log_offset(txid, []), do: log_offset(txid, 0)
+    defp last_log_offset(_txid, changes), do: changes |> List.last() |> Map.fetch!(:log_offset)
 
     defp msg_from_change({{:insert, schema_meta, values}, i}, lsn, txid) do
       {
@@ -166,6 +179,8 @@ if Phoenix.Sync.sandbox_enabled?() do
       type.to_iso8601(datetime)
     end
 
+    defp dump(%Postgrex.Range{} = range, _type), do: encode_range(range)
+
     defp dump(map, _type) when is_map(map), do: @json.encode!(map)
 
     defp dump(list, type) when is_list(list) do
@@ -178,6 +193,49 @@ if Phoenix.Sync.sandbox_enabled?() do
 
     defp dump(nil, _type), do: nil
     defp dump(value, _type), do: to_string(value)
+
+    defp encode_range(%Postgrex.Range{lower: :empty, upper: :empty}), do: "empty"
+
+    defp encode_range(%Postgrex.Range{} = range) do
+      lower_delimiter =
+        if range.lower_inclusive and range.lower != :unbound, do: "[", else: "("
+
+      upper_delimiter =
+        if range.upper_inclusive and range.upper != :unbound, do: "]", else: ")"
+
+      lower_delimiter <>
+        encode_range_bound(range.lower) <>
+        "," <>
+        encode_range_bound(range.upper) <>
+        upper_delimiter
+    end
+
+    defp encode_range_bound(:unbound), do: ""
+
+    defp encode_range_bound(value) do
+      value
+      |> encode_range_value()
+      |> maybe_quote_range_bound()
+    end
+
+    defp encode_range_value(%Decimal{} = value), do: Decimal.to_string(value)
+
+    defp encode_range_value(%type{} = value)
+         when type in [NaiveDateTime, DateTime, Time, Date] do
+      type.to_iso8601(value)
+    end
+
+    defp encode_range_value(value), do: to_string(value)
+
+    defp maybe_quote_range_bound(value) do
+      if value == "" or
+           String.contains?(value, [" ", "\t", "\n", "\r", ",", "\"", "\\", "(", ")", "[", "]"]) do
+        escaped = value |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")
+        "\"" <> escaped <> "\""
+      else
+        value
+      end
+    end
 
     defp log_offset(txid, index) do
       LogOffset.new(txid, index)

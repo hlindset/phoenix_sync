@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Support Electric subset parameters for GET and POST shape requests.
+
+### Changed
+
+- Update the embedded Electric sync service to `1.7.12` and the Elixir client to `0.10.3`.
+- Update the generated TanStack DB app to `@electric-sql/client` `1.5.26` and compatible TanStack DB packages.
+- Align sandbox stack startup, snapshot responses and transaction metadata with Electric 1.7.
+
+### Fixed
+
+- Forward HTTP request options, including custom Finch pools, to the Electric client.
+- Handle empty sandbox transactions and PostgreSQL range values without crashing.
+- Expose Electric's `electric-has-data` and `retry-after` response headers through CORS.
+
 ## [0.6.1] - 2025-10-13
 
 ### Fixed

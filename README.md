@@ -248,7 +248,7 @@ Example config:
 # mix.exs
 defp deps do
   [
-    {:electric, "~> 1.0"},
+    {:electric, "~> 1.7.12", override: true},
     {:phoenix_sync, "~> 0.6"}
   ]
 end
@@ -266,6 +266,13 @@ children = [
   {MyApp.Endpoint, phoenix_sync: Phoenix.Sync.plug_opts()}
 ]
 ```
+
+Phoenix.Sync uses two packages from the Electric monorepo: `electric` is the
+embedded sync service, while `electric_client` is the Elixir client used in all
+modes. `electric_client` 0.10.3 predates Electric 1.7 in its published optional
+dependency constraint, so embedded applications temporarily need
+`override: true` on `electric`. This can be removed once a compatible client
+release widens that constraint.
 
 #### HTTP mode
 
@@ -303,7 +310,7 @@ It is also possible to include Electric as an application dependency and configu
 # mix.exs
 defp deps do
   [
-    {:electric, "~> 1.0"},
+    {:electric, "~> 1.7.12", override: true},
     {:phoenix_sync, "~> 0.6"}
   ]
 end
@@ -342,7 +349,7 @@ With Electric only included and compiled as a dependency in `:dev` and `:test`.
 # mix.exs
 defp deps do
   [
-    {:electric, "~> 1.0", only: [:dev, :test]},
+    {:electric, "~> 1.7.12", only: [:dev, :test], override: true},
     {:phoenix_sync, "~> 0.6"}
   ]
 end

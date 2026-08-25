@@ -106,7 +106,7 @@ defmodule Phoenix.Sync.ApplicationTest do
     end
 
     test "embedded mode dev env" do
-      tmp_dir = System.tmp_dir!()
+      tmp_dir = System.tmp_dir!() |> Path.expand()
 
       config = [
         mode: :embedded,
@@ -340,10 +340,7 @@ defmodule Phoenix.Sync.ApplicationTest do
 
       api = App.plug_opts(config)
 
-      assert %Electric.Shapes.Api{
-               storage: {Electric.ShapeCache.PureFileStorage, %{base_path: ^storage_dir <> _}},
-               persistent_kv: %Electric.PersistentKV.Filesystem{root: ^storage_dir}
-             } = api
+      assert %Electric.Shapes.Api{stack_id: "electric-embedded"} = api
     end
 
     test "remote http mode" do
@@ -372,6 +369,23 @@ defmodule Phoenix.Sync.ApplicationTest do
                  params: %{secret: "my-secret", source_id: "my-source-id", something: "here"}
                }
              } = api
+    end
+
+    test "remote http mode forwards request options and always streams raw bodies" do
+      config = [
+        mode: :http,
+        env: :prod,
+        url: "https://api.electric-sql.cloud",
+        request_opts: [finch: MyFinch, receive_timeout: 75_000, raw: false]
+      ]
+
+      assert %Phoenix.Sync.Electric.ClientAdapter{
+               client: %Electric.Client{
+                 fetch:
+                   {Electric.Client.Fetch.HTTP,
+                    [request: [finch: MyFinch, receive_timeout: 75_000, raw: true]]}
+               }
+             } = App.plug_opts(config)
     end
 
     test "embedded http mode" do

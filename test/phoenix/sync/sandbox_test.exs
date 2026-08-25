@@ -8,6 +8,7 @@ defmodule Phoenix.Sync.SandboxTest do
   Code.ensure_loaded!(Support.SandboxRepo)
   Code.ensure_loaded!(Support.Todo)
   Code.ensure_loaded!(Support.User)
+  Code.ensure_loaded!(Support.RangeRecord)
 
   defmodule Controller do
     use Phoenix.Controller, formats: [:html, :json]
@@ -95,10 +96,10 @@ defmodule Phoenix.Sync.SandboxTest do
     {:ok, lv, html} =
       build_conn()
       |> put_private(:test_pid, self())
+      |> put_private(:electric_client, Phoenix.Sync.Sandbox.client!())
       |> live("/stream/sandbox")
 
     assert_receive {:sync, {:todos, :loaded}}
-    assert_receive {:sync, {:todos, :live}}
 
     for todo <- Repo.all(Todo) do
       assert html =~ todo.title
@@ -106,7 +107,7 @@ defmodule Phoenix.Sync.SandboxTest do
 
     Repo.insert!(%Todo{title: "fourth", completed: false})
 
-    assert_receive {:sync, _event}
+    assert_receive {:sync, {:todos, :live}}
 
     assert render(lv) =~ "fourth"
   end
@@ -166,6 +167,72 @@ defmodule Phoenix.Sync.SandboxTest do
                     }}
   end
 
+  test "inspector reset clears cached metadata" do
+    state = %{
+      repo: Repo,
+      stack_id: Phoenix.Sync.Sandbox.stack_id!(),
+      relations: %{relation: :cached},
+      columns: %{columns: :cached},
+      oids: %{oid: :cached},
+      supported_features: %{features: :cached}
+    }
+
+    assert {:reply, :ok, state} =
+             Phoenix.Sync.Sandbox.Inspector.handle_call(:reset, {self(), make_ref()}, state)
+
+    assert state.relations == %{}
+    assert state.columns == %{}
+    assert state.oids == %{}
+    assert state.supported_features == %{}
+  end
+
+  test "empty transactions do not crash the producer" do
+    stack_id = Phoenix.Sync.Sandbox.stack_id!()
+    producer = GenServer.whereis(Phoenix.Sync.Sandbox.Producer.name(stack_id))
+    monitor = Process.monitor(producer)
+
+    Phoenix.Sync.Sandbox.Producer.emit_changes(stack_id, [])
+
+    refute_receive {:DOWN, ^monitor, :process, ^producer, _reason}, 100
+    assert Process.alive?(producer)
+  end
+
+  @tag table: {
+         "range_records",
+         ["id int8 not null primary key generated always as identity", "span int4range"]
+       }
+  @tag data: nil
+  test "range values pass through sandbox changes" do
+    parent = self()
+
+    start_supervised!(
+      {Task,
+       fn ->
+         for msg <- Phoenix.Sync.Client.stream("range_records"),
+             do: send(parent, {:range_change, msg})
+       end}
+    )
+
+    assert_receive {:range_change, %Electric.Client.Message.ControlMessage{control: :up_to_date}},
+                   1000
+
+    range = %Postgrex.Range{
+      lower: 1,
+      upper: 5,
+      lower_inclusive: true,
+      upper_inclusive: false
+    }
+
+    Support.SandboxRepo.insert!(%Support.RangeRecord{span: range})
+
+    assert_receive {:range_change,
+                    %Electric.Client.Message.ChangeMessage{
+                      value: %{"span" => "[1,5)"},
+                      headers: %{operation: :insert}
+                    }},
+                   1000
+  end
+
   describe "Phoenix.Sync.Router sandbox integration" do
     @describetag :router
 
@@ -180,7 +247,8 @@ defmodule Phoenix.Sync.SandboxTest do
       assert [
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "one"}},
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "two"}},
-               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}}
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
     end
 
@@ -204,7 +272,7 @@ defmodule Phoenix.Sync.SandboxTest do
             Phoenix.ConnTest.build_conn()
             |> Phoenix.ConnTest.get("/sync/todos", %{offset: offset, handle: handle})
 
-          assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "0"}}] =
+          assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "10200"}}] =
                    Jason.decode!(resp.resp_body)
 
           [offset] = Plug.Conn.get_resp_header(resp, "electric-offset")
@@ -237,7 +305,8 @@ defmodule Phoenix.Sync.SandboxTest do
       assert [
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "one"}},
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "two"}},
-               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}}
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
              ] = snapshot
 
       send(task1.pid, :request)
@@ -267,7 +336,8 @@ defmodule Phoenix.Sync.SandboxTest do
       assert [
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "one"}},
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "two"}},
-               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}}
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
     end
 
@@ -292,7 +362,7 @@ defmodule Phoenix.Sync.SandboxTest do
             Phoenix.ConnTest.build_conn()
             |> Phoenix.ConnTest.get(path, %{offset: offset, handle: handle})
 
-          assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "0"}}] =
+          assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "10200"}}] =
                    Jason.decode!(resp.resp_body)
 
           [offset] = Plug.Conn.get_resp_header(resp, "electric-offset")
@@ -325,7 +395,8 @@ defmodule Phoenix.Sync.SandboxTest do
       assert [
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "one"}},
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "two"}},
-               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}}
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "three"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
              ] = snapshot
 
       send(task1.pid, :request)

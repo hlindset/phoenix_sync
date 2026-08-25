@@ -120,7 +120,10 @@ if Code.ensure_loaded?(Igniter) do
 
     defp add_dependencies(igniter, "embedded") do
       igniter
-      |> Igniter.Project.Deps.add_dep({:electric, required_electric_version()}, error?: true)
+      |> Igniter.Project.Deps.add_dep(
+        {:electric, required_electric_version(), override: true},
+        error?: true
+      )
       |> then(fn igniter ->
         if igniter.assigns[:test_mode?] do
           igniter
@@ -300,7 +303,7 @@ if Code.ensure_loaded?(Igniter) do
     defp required_electric_version do
       Phoenix.Sync.MixProject.project()
       |> Keyword.fetch!(:deps)
-      |> Enum.find(&match?({:electric, _, _}, &1))
+      |> Enum.find(&(elem(&1, 0) == :electric))
       |> elem(1)
     end
 

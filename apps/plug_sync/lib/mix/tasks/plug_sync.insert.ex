@@ -3,9 +3,7 @@ defmodule Mix.Tasks.PlugSync.Insert do
 
   @shortdoc "Inserts sample data into the database for testing PlugSync"
 
-    alias PlugSync.Repo
-    alias PlugSync.Tasks.Task
-    alias PlugSync.Tasks.Step
+  alias PlugSync.Repo
 
   def run(args) do
     {opts, _, _} = OptionParser.parse(args, strict: [rows: :integer, data_size: :integer])

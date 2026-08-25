@@ -39,7 +39,7 @@ defmodule Mix.Tasks.PhoenixSync.InstallTest do
       |> assert_has_patch(
         "mix.exs",
         """
-        + |      {:electric, "#{Phoenix.Sync.MixProject.electric_version()}"}
+        + |      {:electric, "#{Phoenix.Sync.MixProject.electric_version()}", override: true}
         """
       )
     end
@@ -285,7 +285,7 @@ defmodule Mix.Tasks.PhoenixSync.InstallTest do
         "mix.exs",
         """
         - |      []
-        + |      [{:electric, "#{Phoenix.Sync.MixProject.electric_version()}"}]
+        + |      [{:electric, "#{Phoenix.Sync.MixProject.electric_version()}", override: true}]
         """
       )
     end

@@ -26,7 +26,7 @@ defmodule PlugSync.MixProject do
       {:bandit, "~> 1.0"},
       {:postgrex, "~> 0.21"},
       {:ecto_sql, "~> 3.0"},
-      {:electric, "~> 1.1.2"},
+      {:electric, "~> 1.7.12", override: true},
       {:phoenix_sync, [path: "../..", override: true]},
       {:igniter, "~> 0.6"}
     ]

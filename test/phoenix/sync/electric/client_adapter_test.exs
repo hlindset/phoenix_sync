@@ -4,6 +4,7 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
   import Plug.Test
 
   alias Phoenix.Sync.Electric.ClientAdapter
+  alias Phoenix.Sync.PredefinedShape
 
   defmodule MockFetch do
     def validate_opts(opts), do: {:ok, opts}
@@ -42,5 +43,35 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
              {"my-header-1", "my-header-1-value-2"},
              {"my-header-2", "my-header-2-value"}
            ]
+  end
+
+  test "forwards subset parameters for server-defined shapes" do
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "elixir://#{inspect(__MODULE__.Fetch)}",
+        fetch: {MockFetch, parent: self()}
+      )
+
+    adapter = %ClientAdapter{client: client}
+    shape = PredefinedShape.new!("things")
+
+    assert {:ok, shape_adapter} =
+             Phoenix.Sync.Adapter.PlugApi.predefined_shape(adapter, shape)
+
+    params = %{
+      "offset" => "-1",
+      "subset__where" => "value = $1",
+      "subset__params" => ["one"],
+      "ignored" => "not-forwarded"
+    }
+
+    assert %{status: 200} =
+             Phoenix.Sync.Adapter.PlugApi.call(shape_adapter, conn(:get, "/things"), params)
+
+    assert_receive {:fetch_request, request}
+
+    assert request.params["subset__where"] == "value = $1"
+    assert request.params["subset__params"] == ["one"]
+    refute Map.has_key?(request.params, "ignored")
   end
 end
