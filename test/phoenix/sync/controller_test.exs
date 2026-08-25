@@ -33,6 +33,14 @@ defmodule Phoenix.Sync.ControllerTest do
     end
   end
 
+  defmodule EnumTodo do
+    use Ecto.Schema
+
+    schema "enum_todos" do
+      field :status, Ecto.Enum, values: [:pending, :running, :paused, :completed, :skipped]
+    end
+  end
+
   defmodule PredicateController do
     use Phoenix.Controller, formats: [:html, :json]
 
@@ -45,6 +53,11 @@ defmodule Phoenix.Sync.ControllerTest do
 
     def invalid(conn, params) do
       sync_render(conn, params, table: "projects", where: "missing = 'open'")
+    end
+
+    def enum(conn, params) do
+      statuses = ["pending", "running", "paused"]
+      sync_render(conn, params, from(todo in EnumTodo, where: todo.status in ^statuses))
     end
   end
 
@@ -74,6 +87,7 @@ defmodule Phoenix.Sync.ControllerTest do
 
     get "/string-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :string
     get "/invalid-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :invalid
+    get "/enum-predicate", Elixir.Phoenix.Sync.ControllerTest.PredicateController, :enum
   end
 
   defmodule Endpoint do
@@ -136,11 +150,37 @@ defmodule Phoenix.Sync.ControllerTest do
     :with_stack_id_from_test,
     :with_unique_db,
     :with_stack_config,
+    :with_enum_type,
     :with_table,
     :with_data,
+    :with_enum_data,
     :start_embedded,
     :configure_endpoint
   ]
+
+  defp with_enum_type(%{postgres_enum: true, db_conn: db_conn}) do
+    Postgrex.query!(
+      db_conn,
+      "CREATE TYPE todo_status AS ENUM ('pending', 'running', 'paused', 'completed', 'skipped')",
+      []
+    )
+
+    :ok
+  end
+
+  defp with_enum_type(_ctx), do: :ok
+
+  defp with_enum_data(%{postgres_enum: true, db_conn: db_conn}) do
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO enum_todos (status) VALUES ('pending'), ('running'), ('completed')",
+      []
+    )
+
+    :ok
+  end
+
+  defp with_enum_data(_ctx), do: :ok
 
   describe "phoenix: sync_render/3" do
     test "returns the shape data", _ctx do
@@ -227,6 +267,29 @@ defmodule Phoenix.Sync.ControllerTest do
 
       assert message in ["Invalid shape definition", "Invalid request"]
       assert List.wrap(error) |> Enum.join(" ") =~ "unknown reference missing"
+    end
+
+    @tag postgres_enum: true
+    @tag table: {
+           "enum_todos",
+           [
+             "id int8 not null primary key generated always as identity",
+             "status todo_status not null"
+           ]
+         }
+    @tag data: nil
+    test "supports Ecto enum predicates", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/enum-predicate", %{offset: "-1"})
+
+      assert resp.status == 200
+
+      assert [
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"status" => "pending"}},
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"status" => "running"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
+             ] = Jason.decode!(resp.resp_body)
     end
 
     test "allows for ecto queries", _ctx do

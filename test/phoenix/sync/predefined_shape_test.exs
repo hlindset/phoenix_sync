@@ -158,6 +158,25 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
              }
     end
 
+    test "casts string-backed Ecto.Enum predicates to text" do
+      import Ecto.Query
+
+      query = from(cow in Cow, where: cow.breed in [:holstein, :angus])
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where == ~s|(("breed"::text) IN ('holstein','angus'))|
+    end
+
+    test "does not rewrite enum column names inside string literals" do
+      import Ecto.Query
+
+      query = from(cow in Cow, where: cow.breed == :holstein and cow.name == ^~s|"breed"|)
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~ ~s|("breed"::text)|
+      assert shape.where =~ ~s|'"breed"'|
+    end
+
     test "changeset function plus opts" do
       ps =
         PredefinedShape.new!(
