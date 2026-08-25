@@ -155,6 +155,34 @@ defmodule Phoenix.Sync.ElectricTest do
              ] = Jason.decode!(resp.resp_body)
     end
 
+    test "makes mounted shape responses eligible for compression", ctx do
+      resp =
+        conn(:get, "/shapes", %{"table" => "things", "offset" => "-1"})
+        |> Plug.Conn.put_req_header("accept-encoding", "gzip")
+        |> call(ctx)
+
+      assert resp.status == 200
+      assert resp.state == :sent
+      assert ["W/" <> _etag] = Plug.Conn.get_resp_header(resp, "etag")
+
+      assert resp
+             |> Plug.Conn.get_resp_header("vary")
+             |> Enum.flat_map(&Plug.Conn.Utils.list/1)
+             |> Enum.any?(&(String.downcase(&1, :ascii) == "accept-encoding"))
+
+      assert [%{"value" => %{"value" => "one"}} | _rest] = Jason.decode!(resp.resp_body)
+    end
+
+    test "does not buffer when response encodings are declined", ctx do
+      resp =
+        conn(:get, "/shapes", %{"table" => "things", "offset" => "-1"})
+        |> Plug.Conn.put_req_header("accept-encoding", "gzip;q=0")
+        |> call(ctx)
+
+      assert [etag] = Plug.Conn.get_resp_header(resp, "etag")
+      refute String.starts_with?(etag, "W/")
+    end
+
     test "supports DELETEs", ctx do
       resp =
         conn(:get, "/shapes", %{"table" => "things", "offset" => "-1"})

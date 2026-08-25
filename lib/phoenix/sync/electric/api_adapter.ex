@@ -26,26 +26,30 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
           when method in ["GET", "POST"] do
         params = Phoenix.Sync.Electric.normalize_subset_params(conn, params)
 
-        if transform_fun = PredefinedShape.transform_fun(shape) do
-          case Shapes.Api.validate(api, params) do
-            {:ok, request} ->
-              response = Shapes.Api.serve_shape_response(request)
-              response = Map.update!(response, :body, &apply_transform(&1, transform_fun))
+        case Shapes.Api.validate(api, params) do
+          {:ok, request} ->
+            response = Shapes.Api.serve_shape_response(request)
 
-              conn
-              |> content_type()
-              |> Plug.Conn.assign(:request, request)
-              |> Plug.Conn.assign(:response, response)
-              |> Shapes.Api.Response.send(response)
+            response =
+              if transform_fun = PredefinedShape.transform_fun(shape) do
+                Map.update!(response, :body, &apply_transform(&1, transform_fun))
+              else
+                response
+              end
 
-            {:error, response} ->
-              conn
-              |> content_type()
-              |> Shapes.Api.Response.send(response)
-              |> Plug.Conn.halt()
-          end
-        else
-          Phoenix.Sync.Adapter.PlugApi.call(api, conn, params)
+            conn = content_type(conn)
+            {conn, response} = Phoenix.Sync.Electric.prepare_compression(conn, response)
+
+            conn
+            |> Plug.Conn.assign(:request, request)
+            |> Plug.Conn.assign(:response, response)
+            |> Shapes.Api.Response.send(response)
+
+          {:error, response} ->
+            conn
+            |> content_type()
+            |> Shapes.Api.Response.send(response)
+            |> Plug.Conn.halt()
         end
       end
 
@@ -77,8 +81,10 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
       end
 
       def send_response(%ApiAdapter{}, conn, {request, response}) do
+        conn = content_type(conn)
+        {conn, response} = Phoenix.Sync.Electric.prepare_compression(conn, response)
+
         conn
-        |> content_type()
         |> Plug.Conn.assign(:request, request)
         |> Plug.Conn.assign(:response, response)
         |> Shapes.Api.Response.send(response)

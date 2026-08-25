@@ -522,6 +522,13 @@ Phoenix.Sync streams `text/event-stream` chunks in both embedded and HTTP
 modes. Predefined row transforms are applied to each SSE data event without
 buffering the stream.
 
+Ordinary JSON shape responses honor the request's `Accept-Encoding` header.
+When the client accepts gzip, deflate, or zstd, Phoenix.Sync makes the response
+non-streaming where necessary, uses a weak ETag for the negotiated
+representation, and varies caches by `Accept-Encoding`. This lets Bandit apply
+its built-in response compression. Omit `Accept-Encoding` to retain Electric's
+chunked response path. SSE responses always remain streamed.
+
 For anything else more dynamic, or to use Ecto queries, you should switch from using the `sync` macros in your router to using `sync_render/3` in a controller.
 
 ### Using a keyword list

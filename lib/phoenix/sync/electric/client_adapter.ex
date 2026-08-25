@@ -36,6 +36,7 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
 
     def send_response(_sync_client, conn, response) do
       conn
+      |> Phoenix.Sync.Electric.prepare_compression()
       |> put_resp_headers(response.headers)
       |> Plug.Conn.send_resp(response.status, response.body)
     end

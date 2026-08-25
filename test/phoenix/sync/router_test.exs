@@ -301,6 +301,33 @@ defmodule Phoenix.Sync.RouterTest do
            ]
          }
     @tag data: {"todos", ["title"], [["one"], ["two"], ["three"]]}
+    test "makes shape snapshots eligible for response compression", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.put_req_header("accept-encoding", "gzip, deflate")
+        |> Phoenix.ConnTest.get("/sync/things-to-do", %{offset: "-1"})
+
+      assert resp.status == 200
+      assert resp.state == :sent
+      assert ["W/" <> _etag] = Plug.Conn.get_resp_header(resp, "etag")
+
+      assert resp
+             |> Plug.Conn.get_resp_header("vary")
+             |> Enum.flat_map(&Plug.Conn.Utils.list/1)
+             |> Enum.any?(&(String.downcase(&1, :ascii) == "accept-encoding"))
+
+      assert [%{"value" => %{"title" => "one"}} | _rest] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
+           "todos",
+           [
+             "id int8 not null primary key generated always as identity",
+             "title text",
+             "completed boolean default false"
+           ]
+         }
+    @tag data: {"todos", ["title"], [["one"], ["two"], ["three"]]}
     test "returns CORS headers", _ctx do
       resp =
         Phoenix.ConnTest.build_conn()

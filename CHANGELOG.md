@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply predefined row transforms to subset snapshot data.
 - Support native Electric relationship/subquery shapes, including move-out deletes.
 - Stream Electric server-sent events through predefined shape routes.
+- Make JSON shape responses eligible for negotiated HTTP compression.
 
 ### Changed
 

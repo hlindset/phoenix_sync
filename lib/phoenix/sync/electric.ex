@@ -883,6 +883,99 @@ defmodule Phoenix.Sync.Electric do
     msgs
   end
 
+  @doc false
+  def prepare_compression(%Plug.Conn{} = conn) do
+    if accepts_compression?(conn) do
+      Plug.Conn.register_before_send(conn, &weaken_etag/1)
+    else
+      conn
+    end
+  end
+
+  if @electric_available? do
+    @doc false
+    def prepare_compression(
+          %Plug.Conn{} = conn,
+          %Electric.Shapes.Api.Response{params: %{live_sse: false}} = response
+        ) do
+      if accepts_compression?(conn) do
+        response =
+          if response.chunked do
+            response
+            |> consume_response_stream()
+            |> Map.put(:chunked, false)
+          else
+            response
+          end
+
+        {prepare_compression(conn), response}
+      else
+        {conn, response}
+      end
+    end
+
+    def prepare_compression(%Plug.Conn{} = conn, %Electric.Shapes.Api.Response{} = response) do
+      {conn, response}
+    end
+  end
+
+  defp accepts_compression?(conn) do
+    conn
+    |> Plug.Conn.get_req_header("accept-encoding")
+    |> Enum.flat_map(&Plug.Conn.Utils.list/1)
+    |> Enum.any?(&accepted_encoding?/1)
+  end
+
+  defp accepted_encoding?(encoding) do
+    [name | params] = String.split(encoding, ";")
+    name = name |> String.trim() |> String.downcase(:ascii)
+
+    name in ["*", "gzip", "x-gzip", "deflate", "zstd"] and
+      encoding_quality(params) > 0
+  end
+
+  defp encoding_quality(params) do
+    Enum.find_value(params, 1.0, fn param ->
+      case param |> String.trim() |> String.downcase(:ascii) |> String.split("=", parts: 2) do
+        ["q", value] ->
+          case Float.parse(value) do
+            {quality, _rest} -> quality
+            :error -> 1.0
+          end
+
+        _other ->
+          nil
+      end
+    end)
+  end
+
+  defp weaken_etag(conn) do
+    conn
+    |> put_weak_etag()
+    |> vary_on_accept_encoding()
+  end
+
+  defp put_weak_etag(conn) do
+    case Plug.Conn.get_resp_header(conn, "etag") do
+      ["W/" <> _etag] -> conn
+      [etag] -> Plug.Conn.put_resp_header(conn, "etag", "W/#{etag}")
+      _none_or_multiple -> conn
+    end
+  end
+
+  defp vary_on_accept_encoding(conn) do
+    vary =
+      conn
+      |> Plug.Conn.get_resp_header("vary")
+      |> Enum.flat_map(&Plug.Conn.Utils.list/1)
+
+    if Enum.any?(vary, &(String.downcase(&1, :ascii) == "accept-encoding")) do
+      conn
+    else
+      Plug.Conn.put_resp_header(conn, "vary", Enum.join(vary ++ ["accept-encoding"], ", "))
+    end
+  end
+
   if @electric_available? do
     @doc false
     # for the embedded api we need to make sure that the response stream is consumed
@@ -917,10 +1010,14 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
 
       case Shapes.Api.validate(api, params) do
         {:ok, request} ->
+          response = Shapes.Api.serve_shape_response(request)
+          conn = content_type(conn)
+          {conn, response} = Phoenix.Sync.Electric.prepare_compression(conn, response)
+
           conn
-          |> content_type()
           |> Plug.Conn.assign(:request, request)
-          |> Shapes.Api.serve_shape_response(request)
+          |> Plug.Conn.assign(:response, response)
+          |> Shapes.Api.Response.send(response)
 
         {:error, response} ->
           conn
@@ -967,8 +1064,10 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
     end
 
     def send_response(_api, conn, {request, response}) do
+      conn = content_type(conn)
+      {conn, response} = Phoenix.Sync.Electric.prepare_compression(conn, response)
+
       conn
-      |> content_type()
       |> Plug.Conn.assign(:request, request)
       |> Plug.Conn.assign(:response, response)
       |> Shapes.Api.Response.send(response)
