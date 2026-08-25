@@ -41,6 +41,9 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
         [table: "here", namespace: :invalid],
         [table: "here", where: :invalid],
         [table: "here", log: :invalid],
+        [table: "here", queryable_columns: []],
+        [table: "here", queryable_columns: "id"],
+        [table: "here", queryable_columns: [1]],
         [table: "here", live: :invalid],
         [table: "here", errors: :invalid]
       ]
@@ -97,6 +100,25 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert PredefinedShape.to_shape_params(ps) |> Enum.sort() ==
                Enum.sort(table: "todos", log_mode: :changes_only)
+    end
+
+    test "converts queryable columns for HTTP and embedded APIs" do
+      ps =
+        PredefinedShape.new!(
+          table: "todos",
+          queryable_columns: ["id", "completed"]
+        )
+
+      assert PredefinedShape.to_client_params(ps) == %{
+               "queryable_columns" => "id,completed",
+               "table" => "todos"
+             }
+
+      assert PredefinedShape.to_api_params(ps) |> Enum.sort() ==
+               Enum.sort(table: "todos", queryable_columns: ["id", "completed"])
+
+      assert PredefinedShape.to_shape_params(ps) |> Enum.sort() ==
+               Enum.sort(table: "todos", queryable_columns: ["id", "completed"])
     end
 
     test "accepts Ecto schema" do

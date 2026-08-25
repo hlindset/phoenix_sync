@@ -16,6 +16,12 @@ defmodule Phoenix.Sync.PredefinedShape do
       default: nil,
       doc: "The Electric log mode for this shape.",
       type_doc: ~s/`:full` | `:changes_only`/
+    ],
+    queryable_columns: [
+      type: {:custom, __MODULE__, :validate_queryable_columns, []},
+      default: nil,
+      doc: "Columns that may be returned or referenced by subset queries.",
+      type_doc: ~s/`[String.t(), ...]`/
     ]
   ]
 
@@ -86,6 +92,19 @@ defmodule Phoenix.Sync.PredefinedShape do
 
   @doc false
   def schema, do: @keyword_shape_schema
+
+  @doc false
+  def validate_queryable_columns(nil), do: {:ok, nil}
+
+  def validate_queryable_columns([_ | _] = columns) do
+    if Enum.all?(columns, &is_binary/1) do
+      {:ok, columns}
+    else
+      {:error, "expected a non-empty list of strings"}
+    end
+  end
+
+  def validate_queryable_columns(_), do: {:error, "expected a non-empty list of strings"}
 
   def is_queryable?(schema) when is_atom(schema) do
     Code.ensure_loaded?(schema) && function_exported?(schema, :__schema__, 1) &&
@@ -311,17 +330,35 @@ defmodule Phoenix.Sync.PredefinedShape do
   end
 
   defp server_http_params(%__MODULE__{server_config: server_config}) do
-    case server_config[:log] do
-      nil -> %{}
-      log -> %{"log" => Atom.to_string(log)}
-    end
+    Enum.reduce(server_config, %{}, fn
+      {:log, nil}, params ->
+        params
+
+      {:log, log}, params ->
+        Map.put(params, "log", Atom.to_string(log))
+
+      {:queryable_columns, nil}, params ->
+        params
+
+      {:queryable_columns, columns}, params ->
+        Map.put(params, "queryable_columns", Enum.join(columns, ","))
+    end)
   end
 
   defp server_api_params(%__MODULE__{server_config: server_config}) do
-    case server_config[:log] do
-      nil -> []
-      log -> [log_mode: log]
-    end
+    Enum.reduce(server_config, [], fn
+      {:log, nil}, params ->
+        params
+
+      {:log, log}, params ->
+        Keyword.put(params, :log_mode, log)
+
+      {:queryable_columns, nil}, params ->
+        params
+
+      {:queryable_columns, columns}, params ->
+        Keyword.put(params, :queryable_columns, columns)
+    end)
   end
 
   defp to_shape_definition(%__MODULE__{query: nil, shape_config: shape_config}) do

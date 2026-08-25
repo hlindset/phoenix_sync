@@ -100,4 +100,29 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
     assert request.offset == "now"
     assert request.params["log"] == "changes_only"
   end
+
+  test "does not allow requests to widen configured queryable columns" do
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "elixir://#{inspect(__MODULE__.Fetch)}",
+        fetch: {MockFetch, parent: self()}
+      )
+
+    adapter = %ClientAdapter{client: client}
+    shape = PredefinedShape.new!("things", queryable_columns: ["id", "visible"])
+
+    assert {:ok, shape_adapter} =
+             Phoenix.Sync.Adapter.PlugApi.predefined_shape(adapter, shape)
+
+    assert %{status: 200} =
+             Phoenix.Sync.Adapter.PlugApi.call(
+               shape_adapter,
+               conn(:get, "/things"),
+               %{"offset" => "-1", "queryable_columns" => "id,secret"}
+             )
+
+    assert_receive {:fetch_request, request}
+
+    assert request.params["queryable_columns"] == "id,visible"
+  end
 end

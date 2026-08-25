@@ -53,6 +53,10 @@ defmodule Phoenix.Sync.RouterTest do
         replica: :full,
         storage: %{compaction: :disabled}
 
+      sync "/queryable-ideas",
+        table: "ideas",
+        queryable_columns: ["id", "title", "plausible"]
+
       # support shapes from a query, passed as the 2nd arg
       sync "/query-where", Support.Todo, where: "completed = false"
 
@@ -299,6 +303,51 @@ defmodule Phoenix.Sync.RouterTest do
                %{"headers" => %{"operation" => "insert"}, "value" => %{"title" => "make tea"}},
                %{"headers" => %{"control" => "snapshot-end"}}
              ] = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
+           "ideas",
+           [
+             "id int8 not null primary key generated always as identity",
+             "title text",
+             "plausible boolean default false",
+             "completed boolean default false"
+           ]
+         }
+    @tag data: {
+           "ideas",
+           ["title", "plausible"],
+           [["world peace", false], ["world war", true], ["make tea", true]]
+         }
+
+    test "restricts subset filters to configured queryable columns", _ctx do
+      allowed =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/sync/queryable-ideas", %{
+          "offset" => "-1",
+          "subset__where" => "plausible = true"
+        })
+
+      assert allowed.status == 200
+
+      assert %{"data" => rows} = Jason.decode!(allowed.resp_body)
+
+      assert Enum.sort(Enum.map(rows, &get_in(&1, ["value", "title"]))) == [
+               "make tea",
+               "world war"
+             ]
+
+      rejected =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/sync/queryable-ideas", %{
+          "offset" => "-1",
+          "subset__where" => "completed = true"
+        })
+
+      assert rejected.status == 400
+
+      assert %{"errors" => %{"subset" => %{"where" => [_ | _]}}} =
+               Jason.decode!(rejected.resp_body)
     end
 
     @tag table: {

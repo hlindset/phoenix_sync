@@ -478,5 +478,8 @@ The available options are:
 - `replica` (optional). By default Electric will only send primary keys + changed columns on updates. Set `replica: :full` to receive the full row, not just the changed columns.
 - `log` (optional). Set to `:changes_only` to subscribe without receiving the
   full initial snapshot. The default is `:full`.
+- `queryable_columns` (optional). Restrict the columns that Electric may return
+  or use in subset filters and ordering. The list must include every primary-key
+  column. Clients cannot widen this list through request parameters.
 
 See the [Electric Shapes guide](https://electric-sql.com/docs/guides/shapes) for more information.
