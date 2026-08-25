@@ -462,6 +462,26 @@ const stream = new ShapeStream({
 })
 ```
 
+Predefined shape routes accept Electric's POST subset protocol as well as the
+`subset__*` GET parameters. Keep the stream position in the query string and
+put the subset expression in the JSON body:
+
+```http
+POST /shapes/episodes?offset=-1
+Content-Type: application/json
+
+{
+  "where": "episode_number > $1",
+  "params": [100],
+  "order_by": "episode_number ASC",
+  "limit": 20
+}
+```
+
+The request may narrow, order, or paginate the configured shape, but it cannot
+replace server-controlled options such as its table, base `where` clause,
+`log`, or `queryable_columns`.
+
 For anything else more dynamic, or to use Ecto queries, you should switch from using the `sync` macros in your router to using `sync_render/3` in a controller.
 
 ### Using a keyword list

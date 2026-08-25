@@ -94,6 +94,7 @@ defmodule Phoenix.Sync.Electric do
   @valid_modes [:http, :embedded, :sandbox, :disabled]
   @client_valid_modes @valid_modes -- [:disabled]
   @electric_available? Code.ensure_loaded?(Electric.Application)
+  @json Phoenix.Sync.json_library()
 
   defmacro __using__(_opts \\ []) do
     Phoenix.Sync.Plug.Utils.env!(__CALLER__)
@@ -129,9 +130,13 @@ defmodule Phoenix.Sync.Electric do
 
   @doc false
   def serve_api(conn, api) do
-    conn = Plug.Conn.fetch_query_params(conn)
+    conn = fetch_request_params(conn)
 
-    Phoenix.Sync.Adapter.PlugApi.call(api, conn, conn.params)
+    if conn.halted do
+      conn
+    else
+      Phoenix.Sync.Adapter.PlugApi.call(api, conn, conn.params)
+    end
   end
 
   @doc false
@@ -600,6 +605,50 @@ defmodule Phoenix.Sync.Electric do
   @subset_body_keys_without_offset @subset_body_keys -- ["offset"]
 
   @doc false
+  def fetch_request_params(%Plug.Conn{} = conn) do
+    conn
+    |> Plug.Conn.fetch_query_params()
+    |> fetch_json_body()
+  end
+
+  defp fetch_json_body(%Plug.Conn{method: "POST", body_params: %Plug.Conn.Unfetched{}} = conn) do
+    case Plug.Conn.read_body(conn) do
+      {:ok, "", conn} ->
+        %{conn | body_params: %{}}
+
+      {:ok, body, conn} ->
+        case @json.decode(body) do
+          {:ok, body_params} when is_map(body_params) ->
+            %{conn | body_params: body_params, params: Map.merge(conn.params, body_params)}
+
+          {:ok, _other} ->
+            send_body_error(conn, 400, %{error: "Request body must be a JSON object"})
+
+          {:error, error} ->
+            send_body_error(conn, 400, %{
+              error: "Invalid JSON in request body",
+              details: Exception.message(error)
+            })
+        end
+
+      {:more, _body, conn} ->
+        send_body_error(conn, 413, %{error: "Request body too large"})
+
+      {:error, _reason} ->
+        send_body_error(conn, 400, %{error: "Failed to read request body"})
+    end
+  end
+
+  defp fetch_json_body(conn), do: conn
+
+  defp send_body_error(conn, status, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(status, @json.encode_to_iodata!(body))
+    |> Plug.Conn.halt()
+  end
+
+  @doc false
   def normalize_subset_params(params, method \\ "GET")
 
   def normalize_subset_params(%Plug.Conn{} = conn, params) when is_map(params) do
@@ -766,8 +815,6 @@ defmodule Phoenix.Sync.Electric do
   defp map_or_empty(map) when is_map(map), do: map
   defp map_or_empty(_), do: %{}
 
-  @json Phoenix.Sync.json_library()
-
   @doc false
   def map_response_body(body, nil) do
     body
@@ -829,7 +876,7 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
       ApiAdapter.new(api, shape)
     end
 
-    def call(api, %{method: "GET"} = conn, params) do
+    def call(api, %{method: method} = conn, params) when method in ["GET", "POST"] do
       params = Phoenix.Sync.Electric.normalize_subset_params(conn, params)
 
       case Shapes.Api.validate(api, params) do

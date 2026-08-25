@@ -6,7 +6,10 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
   defimpl Phoenix.Sync.Adapter.PlugApi do
     alias Electric.Client
 
+    alias Phoenix.Sync.Electric.HttpPost
     alias Phoenix.Sync.PredefinedShape
+
+    @subset_body_keys ~w(where order_by limit offset params where_expr order_by_expr)
 
     def predefined_shape(sync_client, %PredefinedShape{} = predefined_shape) do
       shape_client = PredefinedShape.client(sync_client.client, predefined_shape)
@@ -19,15 +22,16 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     end
 
     def call(sync_client, conn, params) do
-      {request, shape} = request(sync_client, conn, params)
+      {request, shape, body} = request(sync_client, conn, params)
 
-      fetch_upstream(sync_client, conn, request, shape)
+      fetch_upstream(sync_client, conn, request, shape, body)
     end
 
-    def response(sync_client, %{method: "GET"} = conn, params) do
-      {request, shape} = request(sync_client, conn, params)
+    def response(sync_client, %{method: method} = conn, params)
+        when method in ["GET", "POST"] do
+      {request, shape, body} = request(sync_client, conn, params)
 
-      make_request(sync_client, conn, request, shape)
+      make_request(sync_client, conn, request, shape, body)
     end
 
     def send_response(_sync_client, conn, response) do
@@ -39,30 +43,38 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     # this is the server-defined shape route, so we want to only pass on the
     # per-request/stream position params and subset query params, leaving
     # the shape-definition params from the configured client.
-    defp request(%{shape_definition: %PredefinedShape{} = shape} = sync_client, _conn, params) do
-      {
-        Client.request(
-          sync_client.client,
-          method: :get,
-          offset: params["offset"],
-          shape_handle: params["handle"],
-          live: live?(params["live"]),
-          next_cursor: params["cursor"],
-          params: subset_request_params(params)
-        ),
-        shape
-      }
-    end
+    defp request(
+           %{shape_definition: %PredefinedShape{} = shape} = sync_client,
+           %{method: method} = conn,
+           params
+         ) do
+      request_params = request_params(conn, params)
 
-    # this version is the pure client-defined shape version
-    defp request(sync_client, %{method: method} = _conn, params) do
       {
         Client.request(
           sync_client.client,
           method: normalise_method(method),
-          params: params
+          offset: request_params["offset"],
+          shape_handle: request_params["handle"],
+          live: live?(request_params["live"]),
+          next_cursor: request_params["cursor"],
+          params: subset_request_params(request_params)
         ),
-        nil
+        shape,
+        request_body(conn, shape)
+      }
+    end
+
+    # this version is the pure client-defined shape version
+    defp request(sync_client, %{method: method} = conn, params) do
+      {
+        Client.request(
+          sync_client.client,
+          method: normalise_method(method),
+          params: request_params(conn, params)
+        ),
+        nil,
+        request_body(conn, nil)
       }
     end
 
@@ -72,19 +84,53 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     defp subset_request_params(params),
       do: Map.filter(params, fn {key, _} -> String.starts_with?(key, "subset__") end)
 
-    defp fetch_upstream(sync_client, conn, request, shape) do
-      response = make_request(sync_client, conn, request, shape)
+    defp request_params(%{method: "POST", query_params: query_params}, _params),
+      do: map_or_empty(query_params)
+
+    defp request_params(_conn, params), do: params
+
+    defp request_body(%{method: "POST", body_params: body_params}, %PredefinedShape{}) do
+      subset_body(map_or_empty(body_params))
+    end
+
+    defp request_body(%{method: "POST", body_params: body_params}, nil),
+      do: map_or_empty(body_params)
+
+    defp request_body(_conn, _shape), do: nil
+
+    defp subset_body(%{"subset" => subset}) when is_map(subset),
+      do: %{"subset" => take_subset_keys(subset)}
+
+    defp subset_body(%{subset: subset}) when is_map(subset),
+      do: %{"subset" => take_subset_keys(subset)}
+
+    defp subset_body(body), do: take_subset_keys(body)
+
+    defp take_subset_keys(params) do
+      Enum.reduce(params, %{}, fn {key, value}, subset ->
+        key = to_string(key)
+        if key in @subset_body_keys, do: Map.put(subset, key, value), else: subset
+      end)
+    end
+
+    defp map_or_empty(%Plug.Conn.Unfetched{}), do: %{}
+    defp map_or_empty(map) when is_map(map), do: map
+    defp map_or_empty(_), do: %{}
+
+    defp fetch_upstream(sync_client, conn, request, shape, body) do
+      response = make_request(sync_client, conn, request, shape, body)
 
       send_response(sync_client, conn, response)
     end
 
-    defp make_request(sync_client, conn, request, shape) do
+    defp make_request(sync_client, conn, request, shape, body) do
       request = put_req_headers(request, conn.req_headers)
 
       response =
-        case Client.Fetch.request(sync_client.client, request) do
+        case fetch_request(sync_client.client, request, body) do
           %Client.Fetch.Response{} = response -> response
           {:error, %Client.Fetch.Response{} = response} -> response
+          {:error, exception} when is_exception(exception) -> raise exception
         end
 
       body =
@@ -100,12 +146,14 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
       %{response | body: body}
     end
 
+    defp fetch_request(client, request, nil), do: Client.Fetch.request(client, request)
+    defp fetch_request(client, request, body), do: HttpPost.request(client, request, body)
+
     defp put_req_headers(request, headers) do
       merged_headers =
         Enum.reduce(headers, request.headers, fn {header, value}, acc ->
           Map.update(acc, header, [value], fn existing -> [value | List.wrap(existing)] end)
         end)
-        |> expand_headers()
 
       %{request | headers: merged_headers}
     end

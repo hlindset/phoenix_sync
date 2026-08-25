@@ -22,7 +22,8 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
           message: "#{inspect(__MODULE__)} does not support nested predefined shapes"
       end
 
-      def call(%ApiAdapter{api: api, shape: shape}, %{method: "GET"} = conn, params) do
+      def call(%ApiAdapter{api: api, shape: shape}, %{method: method} = conn, params)
+          when method in ["GET", "POST"] do
         params = Phoenix.Sync.Electric.normalize_subset_params(conn, params)
 
         if transform_fun = PredefinedShape.transform_fun(shape) do
@@ -53,8 +54,8 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
         Phoenix.Sync.Adapter.PlugApi.call(api, conn, params)
       end
 
-      # only works if method is GET...
-      def response(%ApiAdapter{api: api, shape: shape}, %{method: "GET"} = conn, params) do
+      def response(%ApiAdapter{api: api, shape: shape}, %{method: method} = conn, params)
+          when method in ["GET", "POST"] do
         params = Phoenix.Sync.Electric.normalize_subset_params(conn, params)
 
         if transform_fun = PredefinedShape.transform_fun(shape) do

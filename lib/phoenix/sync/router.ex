@@ -145,7 +145,7 @@ defmodule Phoenix.Sync.Router do
   defp route(:plug, path, definition) do
     quote bind_quoted: [path: path, shape: Macro.escape(definition)] do
       Plug.Router.match(path,
-        via: :get,
+        via: [:get, :post],
         to: Phoenix.Sync.Router.Shape,
         init_opts: %{
           plug_opts_assign: @plug_assign_opts,
@@ -159,6 +159,14 @@ defmodule Phoenix.Sync.Router do
     quote bind_quoted: [path: path, shape: Macro.escape(definition)] do
       Phoenix.Router.match(
         :get,
+        path,
+        Phoenix.Sync.Router.Shape,
+        %{shape: shape},
+        alias: false
+      )
+
+      Phoenix.Router.match(
+        :post,
         path,
         Phoenix.Sync.Router.Shape,
         %{shape: shape},
@@ -198,14 +206,18 @@ defmodule Phoenix.Sync.Router do
     end
 
     defp serve_shape(conn, api, shape) do
-      Phoenix.Sync.Electric.api_predefined_shape(conn, api, shape, fn conn, shape_api ->
-        conn =
-          conn
-          |> Plug.Conn.fetch_query_params()
-          |> Phoenix.Sync.Plug.CORS.call()
+      conn =
+        conn
+        |> Phoenix.Sync.Plug.CORS.call()
+        |> Phoenix.Sync.Electric.fetch_request_params()
 
-        Phoenix.Sync.Adapter.PlugApi.call(shape_api, conn, conn.params)
-      end)
+      if conn.halted do
+        conn
+      else
+        Phoenix.Sync.Electric.api_predefined_shape(conn, api, shape, fn conn, shape_api ->
+          Phoenix.Sync.Adapter.PlugApi.call(shape_api, conn, conn.params)
+        end)
+      end
     end
   end
 end

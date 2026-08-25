@@ -43,6 +43,7 @@ defmodule Phoenix.Sync.MixProject do
       {:nimble_options, "~> 1.1"},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.0"},
+      {:req, "~> 0.5"},
       {:jason, "~> 1.0"},
       {:ecto_sql, "~> 3.10", optional: true},
       # electric_client 0.10.x has not yet published an Electric 1.7-compatible

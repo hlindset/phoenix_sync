@@ -351,6 +351,52 @@ defmodule Phoenix.Sync.RouterTest do
     end
 
     @tag table: {
+           "ideas",
+           [
+             "id int8 not null primary key generated always as identity",
+             "title text",
+             "plausible boolean default false",
+             "completed boolean default false"
+           ]
+         }
+    @tag data: {
+           "ideas",
+           ["title", "plausible"],
+           [["world peace", false], ["world war", true], ["make tea", true]]
+         }
+
+    test "serves ordered and limited POST subset snapshots", _ctx do
+      body = %{
+        "where" => "plausible = true",
+        "order_by" => "id DESC",
+        "limit" => 1
+      }
+
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.put_req_header("content-type", "application/json")
+        |> Phoenix.ConnTest.post(
+          "/sync/queryable-ideas?offset=-1",
+          Jason.encode!(body)
+        )
+
+      assert resp.status == 200
+
+      assert %{"data" => [%{"value" => %{"title" => "make tea"}}]} =
+               Jason.decode!(resp.resp_body)
+    end
+
+    test "rejects malformed POST subset bodies", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.put_req_header("content-type", "application/json")
+        |> Phoenix.ConnTest.post("/sync/queryable-ideas?offset=-1", "{")
+
+      assert resp.status == 400
+      assert %{"error" => "Invalid JSON in request body"} = Jason.decode!(resp.resp_body)
+    end
+
+    @tag table: {
            {"food", "toeats"},
            [
              "id int8 not null primary key generated always as identity",
