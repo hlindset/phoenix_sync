@@ -17,7 +17,9 @@ defmodule Phoenix.Sync.ApplicationTest do
 
       base_opts = [
         username: "postgres",
-        hostname: "localhost",
+        hostname:
+          Application.fetch_env!(:phoenix_sync, Support.ConfigTestRepo)
+          |> Keyword.fetch!(:hostname),
         database: "phoenix_sync",
         port: 5432,
         sslmode: :disable

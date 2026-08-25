@@ -8,9 +8,9 @@ import Config
 config :phoenix_sync_example, PhoenixSyncExample.Repo,
   username: "postgres",
   password: "password",
-  hostname: "localhost",
+  hostname: System.get_env("PHOENIX_SYNC_TEST_DB_HOST", "localhost"),
   database: "phoenix_sync_example_test#{System.get_env("MIX_TEST_PARTITION")}",
-  port: 55555,
+  port: System.get_env("PHOENIX_SYNC_TEST_DB_PORT", "55555") |> String.to_integer(),
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 

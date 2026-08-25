@@ -15,9 +15,9 @@ config :phoenix_sync, Phoenix.Sync.LiveViewTest.Endpoint, []
 db_config = [
   username: "postgres",
   password: "password",
-  hostname: "localhost",
+  hostname: System.get_env("PHOENIX_SYNC_TEST_DB_HOST", "localhost"),
   database: "phoenix_sync",
-  port: 55555
+  port: System.get_env("PHOENIX_SYNC_TEST_DB_PORT", "55555") |> String.to_integer()
 ]
 
 # configure the support repo with random options so we can validate them in Phoenix.Sync.ConfigTest
