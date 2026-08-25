@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
-export default defineConfig(({ command, mode }) => {
+export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const isProd = mode === 'production'
 
@@ -43,4 +43,3 @@ export default defineConfig(({ command, mode }) => {
     ],
   }
 })
-

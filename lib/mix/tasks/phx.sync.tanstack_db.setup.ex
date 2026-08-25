@@ -318,7 +318,7 @@ if Code.ensure_loaded?(Igniter) do
       |> create_new_file("assets/js/routes/index.tsx")
       |> create_new_file("assets/js/routes/about.tsx")
       |> create_new_file("assets/js/components/todos.tsx")
-      |> create_new_file("assets/js/api.ts")
+      |> create_new_file("assets/js/vite-env.d.ts")
       |> create_new_file("assets/js/app.tsx")
       |> create_or_replace_file("assets/css/app.css")
       |> Igniter.rm("assets/js/app.js")

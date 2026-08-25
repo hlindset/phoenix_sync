@@ -1,12 +1,13 @@
-import { useLiveQuery, eq } from "@tanstack/react-db";
+import { useLiveQuery } from "@tanstack/react-db";
 import { todoCollection } from "../db/collections";
+import type { Todo } from "../db/schema";
 
 export function Todos() {
-  const { data: todos } = useLiveQuery((query) =>
-    query.from({ todo: todoCollection }),
-  );
+  const { data: todos } = useLiveQuery({
+    query: (query) => query.from({ todo: todoCollection }),
+  });
 
-  const toggleTodo = (todo) =>
+  const toggleTodo = (todo: Todo) =>
     todoCollection.update(todo.id, (draft) => {
       draft.completed = !todo.completed;
     });
@@ -27,7 +28,7 @@ export function Todos() {
           />
           <label
             className={`block flex-1 ${todo.completed ? "line-through" : ""}`}
-            for={`todo-${todo.id}`}
+            htmlFor={`todo-${todo.id}`}
           >
             {todo.title}
           </label>
@@ -36,4 +37,3 @@ export function Todos() {
     </ul>
   );
 }
-

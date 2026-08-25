@@ -47,7 +47,7 @@ defmodule Phoenix.Sync.MixProject do
       {:ecto_sql, "~> 3.10", optional: true},
       {:electric, @electric_version, optional: true},
       {:electric_client, "~> 0.7.2"},
-      {:igniter, "~> 0.6", optional: true}
+      {:igniter, "~> 0.8.3", optional: true}
     ] ++ deps_for_env(Mix.env()) ++ json_deps()
   end
 
@@ -55,8 +55,9 @@ defmodule Phoenix.Sync.MixProject do
     [
       {:bandit, "~> 1.5", only: [:test], override: true},
       {:floki, "~> 0.36", only: [:test]},
-      {:lazy_html, ">= 0.1.0", only: :test},
+      {:lazy_html, "~> 0.1.12", only: :test},
       {:mox, "~> 1.1", only: [:test]},
+      {:phx_new, "~> 1.7.21", only: :test, runtime: false},
       {:uuid, "~> 1.1", only: [:test]}
     ]
   end

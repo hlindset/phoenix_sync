@@ -1,13 +1,4 @@
-import {createCollection, localOnlyCollectionOptions,} from '@tanstack/react-db'
-import { ingestMutations } from './mutations'
-
-import type { Value } from '@electric-sql/client'
-import type { ElectricCollectionUtils } from '@tanstack/electric-db-collection'
-import type {
-  InsertMutationFn,
-  UpdateMutationFn,
-  DeleteMutationFn,
-} from '@tanstack/react-db'
+import { createCollection, localOnlyCollectionOptions } from '@tanstack/react-db'
 
 import { todoSchema } from './schema'
 import type { Todo } from './schema'
@@ -23,7 +14,7 @@ import type { Todo } from './schema'
 //
 // https://tanstack.com/db/latest/docs/collections/electric-collection
 //
-export const todoCollection = createCollection<Todo>(
+export const todoCollection = createCollection(
   localOnlyCollectionOptions({
     getKey: (todo: Todo) => todo.id,
     schema: todoSchema,
@@ -36,5 +27,4 @@ export const todoCollection = createCollection<Todo>(
     ],
   })
 )
-
 

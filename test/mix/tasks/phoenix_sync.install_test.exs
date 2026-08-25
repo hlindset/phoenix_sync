@@ -1,7 +1,16 @@
 defmodule Mix.Tasks.PhoenixSync.InstallTest do
   use ExUnit.Case, async: true
 
-  import Igniter.Test
+  import Igniter.Test, except: [phx_test_project: 0, phx_test_project: 1]
+
+  defp phx_test_project(opts \\ []) do
+    opts
+    |> Igniter.Test.phx_test_project()
+    |> include_fixture_files()
+  end
+
+  defp include_fixture_files(igniter),
+    do: Igniter.include_glob(igniter, Path.expand("**/*.*"))
 
   defp run_install_task(igniter, ctx) do
     install_args = Map.fetch!(ctx, :install_args)
@@ -14,6 +23,7 @@ defmodule Mix.Tasks.PhoenixSync.InstallTest do
       Map.update!(assigns, :test_files, &Map.merge(&1, Map.new(files)))
     end)
     |> apply_igniter!()
+    |> include_fixture_files()
     |> Igniter.compose_task("phoenix_sync.install", install_args)
   end
 
