@@ -510,6 +510,18 @@ When the predefined shape has a `transform`, Phoenix.Sync applies it to every
 row in the subset response's `data` list while preserving Electric's response
 metadata and any additional top-level fields.
 
+For long-lived, low-latency updates, continue an existing shape with Electric's
+SSE mode:
+
+```http
+GET /shapes/episodes?offset=12_4&handle=episodes-1&live=true&live_sse=true
+Accept: text/event-stream
+```
+
+Phoenix.Sync streams `text/event-stream` chunks in both embedded and HTTP
+modes. Predefined row transforms are applied to each SSE data event without
+buffering the stream.
+
 For anything else more dynamic, or to use Ecto queries, you should switch from using the `sync` macros in your router to using `sync_render/3` in a controller.
 
 ### Using a keyword list

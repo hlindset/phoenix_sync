@@ -58,7 +58,7 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
           shape_handle: request_params["handle"],
           live: live?(request_params["live"]),
           next_cursor: request_params["cursor"],
-          params: subset_request_params(request_params)
+          params: stream_request_params(request_params)
         ),
         shape,
         request_body(conn, shape)
@@ -81,8 +81,16 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     defp normalise_method(method), do: method |> String.downcase() |> String.to_atom()
     defp live?(live), do: live == "true"
 
-    defp subset_request_params(params),
-      do: Map.filter(params, fn {key, _} -> String.starts_with?(key, "subset__") end)
+    defp stream_request_params(params) do
+      params
+      |> Map.filter(fn {key, _} -> String.starts_with?(key, "subset__") end)
+      |> maybe_put_live_sse(params["live_sse"])
+    end
+
+    defp maybe_put_live_sse(params, live_sse) when live_sse in [true, "true"],
+      do: Map.put(params, "live_sse", "true")
+
+    defp maybe_put_live_sse(params, _live_sse), do: params
 
     defp request_params(%{method: "POST", query_params: query_params}, _params),
       do: map_or_empty(query_params)
@@ -118,9 +126,111 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     defp map_or_empty(_), do: %{}
 
     defp fetch_upstream(sync_client, conn, request, shape, body) do
-      response = make_request(sync_client, conn, request, shape, body)
+      case {sync_client.client.fetch, request.live, request.params["live_sse"], body} do
+        {{Electric.Client.Fetch.HTTP, fetch_opts}, true, "true", nil} ->
+          stream_sse(sync_client.client, fetch_opts, conn, request, shape)
 
-      send_response(sync_client, conn, response)
+        _other ->
+          response = make_request(sync_client, conn, request, shape, body)
+          send_response(sync_client, conn, response)
+      end
+    end
+
+    defp stream_sse(client, fetch_opts, conn, request, shape) do
+      request = put_req_headers(request, conn.req_headers)
+      transform_fun = PredefinedShape.transform_fun(shape)
+
+      request =
+        client
+        |> Client.authenticate_request(request)
+        |> Electric.Client.Fetch.HTTP.build_request(fetch_opts)
+
+      into = fn {:data, data}, {request, response} ->
+        {data, response} = transform_sse_chunk(data, response, transform_fun)
+
+        if data == "" do
+          {:cont, {request, response}}
+        else
+          conn =
+            case Req.Response.get_private(response, :phoenix_sync_conn) do
+              nil ->
+                conn
+                |> merge_req_response_headers(response)
+                |> Plug.Conn.send_chunked(response.status)
+
+              conn ->
+                conn
+            end
+
+          case Plug.Conn.chunk(conn, data) do
+            {:ok, conn} ->
+              response = Req.Response.put_private(response, :phoenix_sync_conn, conn)
+              {:cont, {request, response}}
+
+            {:error, _reason} ->
+              response = Req.Response.put_private(response, :phoenix_sync_conn, conn)
+              {:halt, {request, response}}
+          end
+        end
+      end
+
+      req_opts =
+        [into: into, retry: false]
+        |> maybe_reuse_plug(request.options[:plug])
+
+      case Req.request(request, req_opts) do
+        {:ok, response} ->
+          case Req.Response.get_private(response, :phoenix_sync_conn) do
+            nil ->
+              conn
+              |> merge_req_response_headers(response)
+              |> Plug.Conn.send_resp(response.status, response.body)
+
+            conn ->
+              conn
+          end
+
+        {:error, exception} ->
+          raise exception
+      end
+    end
+
+    defp maybe_reuse_plug(opts, nil), do: opts
+    defp maybe_reuse_plug(opts, plug), do: Keyword.put(opts, :plug, plug)
+
+    defp transform_sse_chunk(data, response, nil), do: {data, response}
+
+    defp transform_sse_chunk(data, response, transform_fun) do
+      buffer = Req.Response.get_private(response, :phoenix_sync_sse_buffer, "") <> data
+      parts = String.split(buffer, "\n\n")
+      {remaining, frames} = List.pop_at(parts, -1)
+
+      data = Enum.map_join(frames, &transform_sse_frame(&1, transform_fun))
+      response = Req.Response.put_private(response, :phoenix_sync_sse_buffer, remaining)
+
+      {data, response}
+    end
+
+    defp transform_sse_frame("data: " <> json, transform_fun) do
+      case Jason.decode(json) do
+        {:ok, message} ->
+          [message]
+          |> Phoenix.Sync.Electric.map_response_body(transform_fun)
+          |> Enum.map_join(fn message -> "data: #{Jason.encode!(message)}\n\n" end)
+
+        {:error, _reason} ->
+          "data: #{json}\n\n"
+      end
+    end
+
+    defp transform_sse_frame(frame, _transform_fun), do: frame <> "\n\n"
+
+    defp merge_req_response_headers(conn, response) do
+      response
+      |> Req.Response.to_map()
+      |> Map.fetch!(:headers)
+      |> Enum.reject(fn {name, _value} -> name == "transfer-encoding" end)
+      |> then(&Plug.Conn.merge_resp_headers(conn, &1))
     end
 
     defp make_request(sync_client, conn, request, shape, body) do

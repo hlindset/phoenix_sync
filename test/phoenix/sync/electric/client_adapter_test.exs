@@ -100,6 +100,71 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
     assert request.params["log"] == "changes_only"
   end
 
+  test "streams SSE responses for server-defined shapes" do
+    parent = self()
+
+    plug = fn conn ->
+      conn = Plug.Conn.fetch_query_params(conn)
+      send(parent, {:sse_request, conn.query_params})
+
+      conn =
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
+        |> Plug.Conn.put_resp_header("electric-offset", "1_0")
+        |> Plug.Conn.send_chunked(200)
+
+      {:ok, conn} =
+        Plug.Conn.chunk(
+          conn,
+          "data: {\"key\":\"things/1\",\"headers\":{\"operation\":\"insert\"},"
+        )
+
+      {:ok, conn} = Plug.Conn.chunk(conn, "\"value\":{\"value\":1}}\n\n")
+      {:ok, conn} = Plug.Conn.chunk(conn, ": keep-alive\n\n")
+      conn
+    end
+
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "http://electric.test",
+        fetch: {Electric.Client.Fetch.HTTP, request: [plug: plug, raw: true]}
+      )
+
+    adapter = %ClientAdapter{client: client}
+
+    shape =
+      PredefinedShape.new!("things",
+        transform: fn message -> put_in(message, ["value", "transformed"], true) end
+      )
+
+    assert {:ok, shape_adapter} =
+             Phoenix.Sync.Adapter.PlugApi.predefined_shape(adapter, shape)
+
+    response =
+      Phoenix.Sync.Adapter.PlugApi.call(
+        shape_adapter,
+        conn(:get, "/things"),
+        %{
+          "offset" => "0_inf",
+          "handle" => "things-1",
+          "live" => "true",
+          "live_sse" => "true"
+        }
+      )
+
+    assert_receive {:sse_request, query}
+    assert query["live"] == "true"
+    assert query["live_sse"] == "true"
+    assert query["table"] == "things"
+
+    assert response.state == :chunked
+    assert Plug.Conn.get_resp_header(response, "content-type") == ["text/event-stream"]
+    assert Plug.Conn.get_resp_header(response, "electric-offset") == ["1_0"]
+
+    assert response.resp_body ==
+             "data: {\"headers\":{\"operation\":\"insert\"},\"key\":\"things/1\",\"value\":{\"transformed\":true,\"value\":1}}\n\n: keep-alive\n\n"
+  end
+
   test "does not allow requests to widen configured queryable columns" do
     {:ok, client} =
       Electric.Client.new(
