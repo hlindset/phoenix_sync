@@ -132,6 +132,18 @@ defmodule Phoenix.Sync.ElectricTest do
     plug.call(conn, phoenix_sync: opts)
   end
 
+  defp start_bandit(ctx) do
+    plug_opts = [phoenix_sync: Phoenix.Sync.plug_opts(electric_opts(ctx))]
+
+    pid =
+      start_supervised!(
+        {Bandit, plug: {MyEnv.TestRouter, plug_opts}, port: 0, startup_log: false}
+      )
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
+    "http://127.0.0.1:#{port}"
+  end
+
   describe "Plug" do
     @describetag table: {
                    "things",
@@ -214,6 +226,35 @@ defmodule Phoenix.Sync.ElectricTest do
       assert resp.status == 204
 
       assert ["if-none-match"] = Plug.Conn.get_resp_header(resp, "access-control-allow-headers")
+    end
+  end
+
+  describe "Bandit" do
+    @describetag table: {
+                   "things",
+                   ["id int8 not null primary key generated always as identity", "value text"]
+                 }
+    @describetag data: {"things", ["value"], [["one"], ["two"], ["three"]]}
+
+    test "serves compressed shape responses over a real HTTP connection", ctx do
+      response =
+        Req.get!(start_bandit(ctx) <> "/shapes",
+          params: [table: "things", offset: "-1"],
+          headers: [{"accept-encoding", "gzip"}],
+          raw: true
+        )
+
+      assert response.status == 200
+      assert Req.Response.get_header(response, "content-encoding") == ["gzip"]
+      assert Req.Response.get_header(response, "electric-offset") == ["0_0"]
+      assert ["W/" <> _etag] = Req.Response.get_header(response, "etag")
+
+      assert [
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"value" => "one"}},
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"value" => "two"}},
+               %{"headers" => %{"operation" => "insert"}, "value" => %{"value" => "three"}},
+               %{"headers" => %{"control" => "snapshot-end"}}
+             ] = response.body |> :zlib.gunzip() |> Jason.decode!()
     end
   end
 
