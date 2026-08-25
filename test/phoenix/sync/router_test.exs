@@ -57,6 +57,10 @@ defmodule Phoenix.Sync.RouterTest do
         table: "ideas",
         queryable_columns: ["id", "title", "plausible"]
 
+      sync "/active-board-episodes",
+        table: "episodes",
+        where: "board_id IN (SELECT id FROM boards WHERE active = true)"
+
       # support shapes from a query, passed as the 2nd arg
       sync "/query-where", Support.Todo, where: "completed = false"
 
@@ -152,9 +156,40 @@ defmodule Phoenix.Sync.RouterTest do
     :with_stack_config,
     :with_table,
     :with_data,
+    :with_relationship_tables,
     :start_embedded,
     :configure_endpoint
   ]
+
+  defp with_relationship_tables(%{relationship: true, db_conn: db_conn}) do
+    Postgrex.query!(
+      db_conn,
+      "CREATE TABLE boards (id text PRIMARY KEY, active boolean NOT NULL)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "CREATE TABLE episodes (id text PRIMARY KEY, board_id text NOT NULL, title text NOT NULL)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO boards (id, active) VALUES ('board-1', true), ('board-2', false)",
+      []
+    )
+
+    Postgrex.query!(
+      db_conn,
+      "INSERT INTO episodes (id, board_id, title) VALUES ('episode-1', 'board-1', 'active episode'), ('episode-2', 'board-2', 'inactive episode')",
+      []
+    )
+
+    :ok
+  end
+
+  defp with_relationship_tables(_ctx), do: :ok
 
   describe "Phoenix.Router - sync/2" do
     @tag table: {
@@ -349,6 +384,27 @@ defmodule Phoenix.Sync.RouterTest do
 
       assert %{"errors" => %{"subset" => %{"where" => [_ | _]}}} =
                Jason.decode!(rejected.resp_body)
+    end
+
+    @tag relationship: true
+    test "serves relationship subquery snapshots", _ctx do
+      snapshot =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/sync/active-board-episodes", %{offset: "-1"})
+
+      assert snapshot.status == 200
+      assert [_handle] = Plug.Conn.get_resp_header(snapshot, "electric-handle")
+      assert [_offset] = Plug.Conn.get_resp_header(snapshot, "electric-offset")
+
+      assert [
+               %{
+                 "headers" => %{"operation" => "insert", "tags" => [_ | _]},
+                 "value" => %{"title" => "active episode"}
+               }
+             ] =
+               snapshot.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
     end
 
     @tag table: {

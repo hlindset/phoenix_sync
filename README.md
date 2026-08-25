@@ -426,7 +426,10 @@ Or using a schema (equivalent to `from(t in Todos.Todo)`):
 sync_render(conn, params, Todos.Todo)
 ```
 
-Query support is currently limited to `where` conditions. Support for more complex queries using `join`, `order_by`, `limit` and preloaded association graphs is planned and will be added in Q2 2025.
+Ecto query support is currently limited to `where` conditions. Use a keyword
+shape with a native Electric `where` expression for relationship subqueries.
+Ordering and limiting an initial result set are available through subset
+snapshots, described below.
 
 The static shapes defined using the `sync/2` or `sync/3` router macros do not accept `Ecto.Query` structs as a shape definition. This is to avoid excessive recompilation caused by your router having a compile-time dependency on your `Ecto` schemas.
 
@@ -443,6 +446,27 @@ You can also include `replica` (see below) in your static shape definitions:
 
 sync "/incomplete-todos", Todos.Todo, where: "completed = false", replica: :full
 ```
+
+Electric relationship shapes can keep rows selected through another table in
+sync. Define these with Electric's native single-column `IN` or `NOT IN`
+subquery syntax:
+
+```elixir
+sync "/visible-episodes",
+  table: "episodes",
+  where: """
+  board_id IN (
+    SELECT board_id FROM board_memberships WHERE user_id = $1
+  )
+  """,
+  params: ["user-123"]
+```
+
+Electric updates the shape when a membership changes: newly related episodes
+move into the stream, and episodes that are no longer related arrive as delete
+events. Phoenix.Sync supports those events in both HTTP and embedded modes.
+Subqueries may be nested, but this protocol is intentionally narrower than
+general SQL joins, `EXISTS`, or correlated subqueries.
 
 For progressive sync, set `log: :changes_only` on the predefined shape. The
 client can start listening for future changes with `offset=now` and request
@@ -498,6 +522,8 @@ The available options are:
 - `table` (required). The Postgres table name. Be aware of casing and [Postgres's handling of unquoted upper-case names](https://wiki.postgresql.org/wiki/Don%27t_Do_This#Don.27t_use_upper_case_table_or_column_names).
 - `namespace` (optional). The Postgres namespace that the table belongs to. Defaults to `public`.
 - `where` (optional). Filter to apply to the synced data in SQL format, e.g. `where: "amount < 1.23 AND colour in ('red', 'green')"`.
+- `params` (optional). Values for `$1`, `$2`, and subsequent placeholders in
+  `where`, including relationship subqueries.
 - `columns` (optional). The columns to include in the synced data. By default Electric will include all columns in the table. The column list **must** include all primary keys. E.g. `columns: ["id", "title", "amount"]`.
 - `replica` (optional). By default Electric will only send primary keys + changed columns on updates. Set `replica: :full` to receive the full row, not just the changed columns.
 - `log` (optional). Set to `:changes_only` to subscribe without receiving the

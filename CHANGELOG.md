@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support server-controlled `queryable_columns` on predefined shapes.
 - Serve Electric subset snapshots through GET and POST predefined shape routes.
 - Apply predefined row transforms to subset snapshot data.
+- Support native Electric relationship/subquery shapes, including move-out deletes.
 
 ### Changed
 

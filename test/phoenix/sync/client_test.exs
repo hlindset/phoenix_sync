@@ -240,5 +240,67 @@ defmodule Phoenix.Sync.ClientTest do
                %ControlMessage{control: :up_to_date}
              ] = events
     end
+
+    test "materializes relationship move-outs as deletes" do
+      {:ok, client} = Electric.Client.Mock.new()
+
+      stream_task =
+        Task.async(fn ->
+          Phoenix.Sync.Client.stream(
+            table: "episodes",
+            where: "board_id IN (SELECT id FROM boards WHERE active = true)",
+            client: client
+          )
+          |> Enum.take(3)
+        end)
+
+      key = ~s|"public"."episodes"/"episode-1"|
+      value = %{"id" => "episode-1", "board_id" => "board-1", "title" => "Pilot"}
+
+      {:ok, _request} =
+        Electric.Client.Mock.response(client,
+          status: 200,
+          schema: %{
+            id: %{type: "text", pk_position: 0},
+            board_id: %{type: "text"},
+            title: %{type: "text"}
+          },
+          last_offset: Electric.Client.Offset.first(),
+          shape_handle: "episodes-1",
+          body: [
+            %{
+              "key" => key,
+              "value" => value,
+              "headers" => %{
+                "operation" => "insert",
+                "tags" => ["active-board"],
+                "active_conditions" => [true]
+              }
+            },
+            Electric.Client.Mock.up_to_date()
+          ]
+        )
+
+      {:ok, _request} =
+        Electric.Client.Mock.response(client,
+          status: 200,
+          last_offset: Electric.Client.Offset.new(1, 0),
+          shape_handle: "episodes-1",
+          body: [
+            %{
+              "headers" => %{
+                "event" => "move-out",
+                "patterns" => [%{"pos" => 0, "value" => "active-board"}]
+              }
+            }
+          ]
+        )
+
+      assert [
+               %ChangeMessage{key: ^key, value: ^value, headers: %Headers{operation: :insert}},
+               %ControlMessage{control: :up_to_date},
+               %ChangeMessage{key: ^key, value: ^value, headers: %Headers{operation: :delete}}
+             ] = Task.await(stream_task)
+    end
   end
 end
