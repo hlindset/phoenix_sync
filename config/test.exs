@@ -12,44 +12,27 @@ config :logger, :default_formatter,
 
 config :phoenix_sync, Phoenix.Sync.LiveViewTest.Endpoint, []
 
-db_config = [
-  username: "postgres",
-  password: "password",
-  hostname: System.get_env("PHOENIX_SYNC_TEST_DB_HOST", "localhost"),
-  database: "phoenix_sync",
-  port: System.get_env("PHOENIX_SYNC_TEST_DB_PORT", "55555") |> String.to_integer()
-]
-
 # configure the support repo with random options so we can validate them in Phoenix.Sync.ConfigTest
 config :phoenix_sync,
        Support.Repo,
-       db_config ++
-         [
-           stacktrace: true,
-           show_sensitive_data_on_connection_error: true,
-           pool_size: 10,
-           pool: Ecto.Adapters.SQL.Sandbox
-         ]
+       stacktrace: true,
+       show_sensitive_data_on_connection_error: true,
+       pool_size: 10,
+       pool: Ecto.Adapters.SQL.Sandbox
 
 config :phoenix_sync,
        Support.ConfigTestRepo,
-       Keyword.delete(db_config, :port) ++
-         [
-           stacktrace: true,
-           show_sensitive_data_on_connection_error: true,
-           pool_size: 10
-         ]
+       stacktrace: true,
+       show_sensitive_data_on_connection_error: true,
+       pool_size: 10
 
 config :phoenix_sync,
        Support.SandboxRepo,
-       db_config ++
-         [
-           stacktrace: true,
-           show_sensitive_data_on_connection_error: true,
-           pool: Ecto.Adapters.SQL.Sandbox,
-           pool_size: 10,
-           ownership_log: :warning
-         ]
+       stacktrace: true,
+       show_sensitive_data_on_connection_error: true,
+       pool: Ecto.Adapters.SQL.Sandbox,
+       pool_size: 10,
+       ownership_log: :warning
 
 config :phoenix_sync, env: :test, mode: :sandbox
 

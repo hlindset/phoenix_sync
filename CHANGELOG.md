@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Update the embedded Electric sync service to `1.7.12` and the Elixir client to `0.10.3`.
+- Resolve test repos and embedded Electric from one `DATABASE_URL`, retaining
+  the test host and port variables as a fallback.
 - Update the generated TanStack DB app to `@electric-sql/client` `1.5.26` and compatible TanStack DB packages.
 - Require Elixir 1.18 and update Req to `0.8.0-rc.0`, using `Req.stream/4`
   for server-sent event proxying.
