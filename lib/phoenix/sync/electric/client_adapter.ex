@@ -146,14 +146,15 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
         |> Client.authenticate_request(request)
         |> Electric.Client.Fetch.HTTP.build_request(fetch_opts)
 
-      into = fn {:data, data}, {request, response} ->
-        {data, response} = transform_sse_chunk(data, response, transform_fun)
+      stream_fun = fn data, response, acc ->
+        {data, buffer} = transform_sse_chunk(data, acc.buffer, transform_fun)
+        acc = %{acc | buffer: buffer}
 
         if data == "" do
-          {:cont, {request, response}}
+          {:cont, acc}
         else
           conn =
-            case Req.Response.get_private(response, :phoenix_sync_conn) do
+            case acc.conn do
               nil ->
                 conn
                 |> merge_req_response_headers(response)
@@ -165,33 +166,31 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
 
           case Plug.Conn.chunk(conn, data) do
             {:ok, conn} ->
-              response = Req.Response.put_private(response, :phoenix_sync_conn, conn)
-              {:cont, {request, response}}
+              {:cont, %{acc | conn: conn}}
 
             {:error, _reason} ->
-              response = Req.Response.put_private(response, :phoenix_sync_conn, conn)
-              {:halt, {request, response}}
+              {:halt, %{acc | conn: conn}}
           end
         end
       end
 
       req_opts =
-        [into: into, retry: false]
+        [retry: false]
         |> maybe_reuse_plug(request.options[:plug])
 
-      case Req.request(request, req_opts) do
-        {:ok, response} ->
-          case Req.Response.get_private(response, :phoenix_sync_conn) do
+      case Req.stream(request, %{buffer: "", conn: nil}, stream_fun, req_opts) do
+        {:ok, response, acc} ->
+          case acc.conn do
             nil ->
               conn
               |> merge_req_response_headers(response)
-              |> Plug.Conn.send_resp(response.status, response.body)
+              |> Plug.Conn.send_resp(response.status, response.body || "")
 
             conn ->
               conn
           end
 
-        {:error, exception} ->
+        {:error, exception, _response, _acc} ->
           raise exception
       end
     end
@@ -199,17 +198,16 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     defp maybe_reuse_plug(opts, nil), do: opts
     defp maybe_reuse_plug(opts, plug), do: Keyword.put(opts, :plug, plug)
 
-    defp transform_sse_chunk(data, response, nil), do: {data, response}
+    defp transform_sse_chunk(data, buffer, nil), do: {data, buffer}
 
-    defp transform_sse_chunk(data, response, transform_fun) do
-      buffer = Req.Response.get_private(response, :phoenix_sync_sse_buffer, "") <> data
+    defp transform_sse_chunk(data, buffer, transform_fun) do
+      buffer = buffer <> data
       parts = String.split(buffer, "\n\n")
       {remaining, frames} = List.pop_at(parts, -1)
 
       data = Enum.map_join(frames, &transform_sse_frame(&1, transform_fun))
-      response = Req.Response.put_private(response, :phoenix_sync_sse_buffer, remaining)
 
-      {data, response}
+      {data, remaining}
     end
 
     defp transform_sse_frame("data: " <> json, transform_fun) do

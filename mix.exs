@@ -9,7 +9,7 @@ defmodule Phoenix.Sync.MixProject do
     [
       app: :phoenix_sync,
       version: @version,
-      elixir: "~> 1.17",
+      elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       consolidate_protocols: Mix.env() in [:dev, :prod],
@@ -43,7 +43,7 @@ defmodule Phoenix.Sync.MixProject do
       {:nimble_options, "~> 1.1"},
       {:phoenix_live_view, "~> 1.0", optional: true},
       {:plug, "~> 1.0"},
-      {:req, "~> 0.5"},
+      {:req, "~> 0.8.0-rc.0"},
       {:jason, "~> 1.0"},
       {:ecto_sql, "~> 3.10", optional: true},
       # electric_client 0.10.x has not yet published an Electric 1.7-compatible
