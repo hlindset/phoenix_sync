@@ -138,6 +138,55 @@ defmodule Phoenix.Sync.ControllerTest do
 
       sync_render(conn, params, query)
     end
+
+    def relationship_subquery(conn, %{"user_id" => user_id} = params) do
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^user_id,
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      sync_render(conn, params, query)
+    end
+
+    def row_relationship_subquery(conn, %{"user_id" => user_id} = params) do
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^user_id,
+          select: {membership.board_id, membership.tenant_id}
+
+      query =
+        from episode in Episode,
+          where: fragment("(?, ?)", episode.board_id, episode.tenant_id) in subquery(memberships),
+          select: episode
+
+      sync_render(conn, params, query)
+    end
+
+    def nested_relationship_subquery(conn, %{"user_id" => user_id} = params) do
+      active_boards =
+        from board in Board,
+          where: board.active == true,
+          select: board.id
+
+      memberships =
+        from membership in Membership,
+          where:
+            membership.user_id == ^user_id and
+              membership.board_id in subquery(active_boards),
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      sync_render(conn, params, query)
+    end
   end
 
   defmodule Router do
@@ -179,6 +228,18 @@ defmodule Phoenix.Sync.ControllerTest do
     get "/relationship-on-filter",
         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
         :relationship_on_filter
+
+    get "/relationship-subquery",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :relationship_subquery
+
+    get "/row-relationship-subquery",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :row_relationship_subquery
+
+    get "/nested-relationship-subquery",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :nested_relationship_subquery
   end
 
   defmodule Endpoint do
@@ -475,6 +536,59 @@ defmodule Phoenix.Sync.ControllerTest do
                |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
                |> Enum.map(&get_in(&1, ["value", "title"]))
                |> Enum.sort()
+    end
+
+    @tag relationship: true
+    test "supports Ecto IN subqueries", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/relationship-subquery", %{offset: "-1", user_id: "user-1"})
+
+      assert resp.status == 200
+
+      assert ["inactive", "mine"] ==
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+               |> Enum.map(&get_in(&1, ["value", "title"]))
+               |> Enum.sort()
+    end
+
+    @tag relationship: true
+    test "supports row-valued Ecto IN subqueries", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/row-relationship-subquery", %{
+          offset: "-1",
+          user_id: "user-1"
+        })
+
+      assert resp.status == 200
+
+      assert ["inactive", "mine"] ==
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+               |> Enum.map(&get_in(&1, ["value", "title"]))
+               |> Enum.sort()
+    end
+
+    @tag relationship: true
+    test "supports nested Ecto IN subqueries", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/nested-relationship-subquery", %{
+          offset: "-1",
+          user_id: "user-1"
+        })
+
+      assert resp.status == 200
+
+      assert ["mine"] ==
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+               |> Enum.map(&get_in(&1, ["value", "title"]))
     end
 
     test "allows for ecto queries", _ctx do

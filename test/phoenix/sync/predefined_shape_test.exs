@@ -49,6 +49,7 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
     schema "board_memberships" do
       field :board_id, :integer
+      field :tenant_id, :integer
       field :user_id, :string
       field :role, Ecto.Enum, values: [:viewer, :editor]
     end
@@ -277,6 +278,145 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert shape.where ==
                ~s|("board_id", "tenant_id") IN (SELECT "id", "tenant_id" FROM "boards" WHERE ("active" = TRUE))|
+    end
+
+    test "converts Ecto IN subqueries into Electric relationship subqueries" do
+      import Ecto.Query
+
+      published = true
+
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^"user-1",
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.published == ^published and episode.board_id in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~ ~s|("published" = TRUE)|
+
+      assert shape.where =~
+               ~s|"board_id" IN (SELECT "board_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
+    end
+
+    test "converts row-valued Ecto IN subqueries" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^"user-1",
+          select: {membership.board_id, membership.tenant_id}
+
+      query =
+        from episode in Episode,
+          where: fragment("(?, ?)", episode.board_id, episode.tenant_id) in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") IN (SELECT "board_id", "tenant_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
+    end
+
+    test "converts nested Ecto IN subqueries" do
+      import Ecto.Query
+
+      active_boards =
+        from board in Board,
+          where: board.active == true,
+          select: board.id
+
+      memberships =
+        from membership in Membership,
+          where:
+            membership.user_id == ^"user-1" and
+              membership.board_id in subquery(active_boards),
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~
+               ~s|"board_id" IN (SELECT "board_id" FROM "board_memberships" WHERE|
+
+      assert shape.where =~
+               ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE ("active" = TRUE))|
+    end
+
+    test "rejects correlated Ecto subqueries" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          where: membership.board_id == parent_as(:episode).board_id,
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          as: :episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      assert_raise ArgumentError, ~r/correlated Ecto subqueries/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
+    test "rejects negative Ecto subquery membership" do
+      import Ecto.Query
+
+      memberships = from membership in Membership, select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id not in subquery(memberships),
+          select: episode
+
+      assert_raise ArgumentError, ~r/Negative Ecto subquery membership/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
+    test "rejects subquery membership wrapped in another expression" do
+      import Ecto.Query
+
+      memberships = from membership in Membership, select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships) == true,
+          select: episode
+
+      assert_raise ArgumentError, ~r/direct positive IN predicate/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
+    test "rejects ordering and limits in Ecto shape subqueries" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          order_by: membership.board_id,
+          limit: 1,
+          select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      assert_raise ArgumentError, ~r/Ecto ORDER BY cannot be represented/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
     end
 
     test "converts Ecto association joins into relationship subqueries" do

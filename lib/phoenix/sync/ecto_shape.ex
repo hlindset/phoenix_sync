@@ -26,9 +26,10 @@ if Code.ensure_loaded?(Ecto) do
     def shape!(%Query{} = query, opts) do
       validate_query!(query)
 
-      case query.joins do
-        [] -> simple_shape!(query, opts)
-        [_ | _] -> relationship_shape!(query, opts)
+      case {query.joins, subquery_predicates?(query)} do
+        {[], false} -> simple_shape!(query, opts)
+        {[], true} -> subquery_shape!(query, opts)
+        {[_ | _], _subqueries?} -> relationship_shape!(query, opts)
       end
     end
 
@@ -40,7 +41,20 @@ if Code.ensure_loaded?(Ecto) do
       sources = sources(query)
       edges = relationship_edges(query, sources)
 
-      relationship_shape!(query, opts, edges, sources, mixed_boolean_predicates?(query))
+      relationship_shape!(
+        query,
+        opts,
+        edges,
+        sources,
+        mixed_boolean_predicates?(query) or subquery_predicates?(query)
+      )
+    end
+
+    defp subquery_shape!(query, opts) do
+      root_shape = query |> Map.put(:wheres, []) |> simple_shape!(opts)
+      predicate_where = boolean_where(query.wheres, [], sources(query))
+
+      %{root_shape | where: combine_where([root_shape.where, predicate_where])}
     end
 
     defp relationship_shape!(query, opts, edges, sources, false) do
@@ -121,6 +135,20 @@ if Code.ensure_loaded?(Ecto) do
       Enum.any?(query.wheres, fn where ->
         where.op != :and or MapSet.size(binding_references(where.expr)) > 1
       end)
+    end
+
+    defp subquery_predicates?(query) do
+      Enum.any?(query.wheres, &subquery_expression?(&1.expr))
+    end
+
+    defp subquery_expression?(expression) do
+      {_expression, subquery?} =
+        Macro.prewalk(expression, false, fn
+          {:subquery, _index} = expression, _subquery? -> {expression, true}
+          expression, subquery? -> {expression, subquery?}
+        end)
+
+      subquery?
     end
 
     defp validate_select!(%Query{select: nil}), do: :ok
@@ -404,26 +432,49 @@ if Code.ensure_loaded?(Ecto) do
       )
     end
 
+    defp boolean_expression({:in, _, [left, {:subquery, index}]}, where, edges, sources) do
+      {binding, left_fields} = membership_fields!(left, sources)
+      subquery = Enum.fetch!(where.subqueries, index)
+
+      left_fields
+      |> membership_subquery!(subquery)
+      |> relationship_predicate(binding, edges, sources)
+    end
+
     defp boolean_expression({:not, _, [expression]}, where, edges, sources) do
-      ["NOT (", boolean_expression(expression, where, edges, sources), ")"]
-      |> IO.iodata_to_binary()
+      if subquery_expression?(expression) do
+        raise ArgumentError,
+          message:
+            "Negative Ecto subquery membership cannot be represented safely without " <>
+              "a non-null projected membership key"
+      else
+        ["NOT (", boolean_expression(expression, where, edges, sources), ")"]
+        |> IO.iodata_to_binary()
+      end
     end
 
     defp boolean_expression(expression, where, edges, sources) do
-      case MapSet.to_list(binding_references(expression)) do
-        [] ->
-          expression_where(0, expression, where, sources)
+      if subquery_expression?(expression) do
+        raise ArgumentError,
+          message:
+            "Ecto subqueries must be used as a direct positive IN predicate in " <>
+              "where or or_where"
+      else
+        case MapSet.to_list(binding_references(expression)) do
+          [] ->
+            expression_where(0, expression, where, sources)
 
-        [binding] ->
-          binding
-          |> expression_where(expression, where, sources)
-          |> relationship_predicate(binding, edges, sources)
+          [binding] ->
+            binding
+            |> expression_where(expression, where, sources)
+            |> relationship_predicate(binding, edges, sources)
 
-        bindings ->
-          raise ArgumentError,
-            message:
-              "An Ecto predicate references multiple Ecto bindings #{inspect(bindings)}. " <>
-                "Electric relationship predicates must compare values from one table at a time."
+          bindings ->
+            raise ArgumentError,
+              message:
+                "An Ecto predicate references multiple Ecto bindings #{inspect(bindings)}. " <>
+                  "Electric relationship predicates must compare values from one table at a time."
+        end
       end
     end
 
@@ -455,8 +506,173 @@ if Code.ensure_loaded?(Ecto) do
           expression -> expression
         end)
 
-      %{where | expr: expression, params: Enum.map(indexes, &Enum.fetch!(where.params, &1))}
+      where = %{
+        where
+        | expr: expression,
+          params: Enum.map(indexes, &Enum.fetch!(where.params, &1))
+      }
+
+      if Map.has_key?(where, :subqueries), do: %{where | subqueries: []}, else: where
     end
+
+    defp membership_fields!(expression, sources) do
+      fields = membership_field_expressions!(expression)
+
+      {bindings, fields} =
+        fields
+        |> Enum.map(fn expression ->
+          case field_reference(expression) do
+            {:ok, reference} ->
+              reference
+
+            :error ->
+              raise ArgumentError,
+                message: "The left side of an Ecto IN subquery must contain only schema fields"
+          end
+        end)
+        |> Enum.unzip()
+
+      case Enum.uniq(bindings) do
+        [binding] ->
+          source = Map.fetch!(sources, binding)
+          {binding, Enum.map(fields, &field_source(source.schema, &1))}
+
+        bindings ->
+          raise ArgumentError,
+            message:
+              "The left side of an Ecto IN subquery references multiple bindings " <>
+                inspect(bindings)
+      end
+    end
+
+    defp membership_field_expressions!(expression) do
+      case field_reference(expression) do
+        {:ok, _reference} ->
+          [expression]
+
+        :error ->
+          row_membership_fields!(expression)
+      end
+    end
+
+    defp row_membership_fields!({:fragment, _, [{:raw, open}, {:expr, first} | rest]}) do
+      if String.trim(open) == "(" do
+        consume_row_fragment!(rest, [first])
+      else
+        invalid_row_membership!()
+      end
+    end
+
+    defp row_membership_fields!(_expression), do: invalid_row_membership!()
+
+    defp consume_row_fragment!([{:raw, close}], fields) do
+      if String.trim(close) == ")" do
+        Enum.reverse(fields)
+      else
+        invalid_row_membership!()
+      end
+    end
+
+    defp consume_row_fragment!([{:raw, comma}, {:expr, field} | rest], fields) do
+      if Regex.match?(~r/^\s*,\s*$/, comma) do
+        consume_row_fragment!(rest, [field | fields])
+      else
+        invalid_row_membership!()
+      end
+    end
+
+    defp consume_row_fragment!(_parts, _fields), do: invalid_row_membership!()
+
+    defp invalid_row_membership! do
+      raise ArgumentError,
+        message:
+          "Row-valued Ecto IN subqueries require an exact " <>
+            ~s|fragment("(?, ...)", field, ...)|
+    end
+
+    defp membership_subquery!(left_fields, %Ecto.SubQuery{query: query}) do
+      validate_subquery!(query)
+
+      source = source!(query.from.source, query.prefix || query.from.prefix, 0)
+      selected_fields = subquery_select_fields!(query.select, source)
+
+      if length(left_fields) != length(selected_fields) do
+        raise ArgumentError,
+          message:
+            "Ecto IN subquery field count does not match its left side: " <>
+              "#{length(left_fields)} != #{length(selected_fields)}"
+      end
+
+      where = boolean_where(query.wheres, [], %{0 => source})
+
+      [
+        quote_field_tuple(left_fields),
+        " IN (SELECT ",
+        Enum.map_join(selected_fields, ", ", &quote_identifier/1),
+        " FROM ",
+        quote_table(source),
+        where_clause(where),
+        ")"
+      ]
+      |> IO.iodata_to_binary()
+    end
+
+    defp validate_subquery!(query) do
+      if correlated_query?(query) do
+        raise ArgumentError,
+          message:
+            "Electric shapes do not support correlated Ecto subqueries; " <>
+              "use an uncorrelated IN subquery"
+      end
+
+      validate_query!(query)
+
+      if query.joins != [] do
+        raise ArgumentError,
+          message: "Ecto shape subqueries must read from one schema source without joins"
+      end
+    end
+
+    defp correlated_query?(query) do
+      expressions =
+        Enum.map(query.wheres, & &1.expr) ++
+          if(query.select, do: [query.select.expr], else: [])
+
+      Enum.any?(expressions, &correlated_expression?/1)
+    end
+
+    defp correlated_expression?(expression) do
+      {_expression, correlated?} =
+        Macro.prewalk(expression, false, fn
+          {:parent_as, _, _} = expression, _correlated? -> {expression, true}
+          expression, correlated? -> {expression, correlated?}
+        end)
+
+      correlated?
+    end
+
+    defp subquery_select_fields!(%Ecto.Query.SelectExpr{expr: expression}, source) do
+      expression
+      |> subquery_select_expressions!()
+      |> Enum.map(fn expression ->
+        case field_reference(expression) do
+          {:ok, {0, field}} ->
+            field_source(source.schema, field)
+
+          _ ->
+            raise ArgumentError,
+              message: "Ecto shape subqueries must select plain fields from their source schema"
+        end
+      end)
+    end
+
+    defp subquery_select_fields!(_select, _source) do
+      raise ArgumentError,
+        message: "Ecto shape subqueries must select one or more source fields"
+    end
+
+    defp subquery_select_expressions!({:{}, _, [_ | _] = expressions}), do: expressions
+    defp subquery_select_expressions!(expression), do: [expression]
 
     defp parameter_indexes(expression) do
       {_expression, indexes} =

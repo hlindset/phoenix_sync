@@ -20,6 +20,8 @@ Phoenix.Sync currently supports:
 - composite joins whose field equalities all connect the new binding to the
   same earlier binding;
 - additional `on` predicates that reference only the newly joined binding;
+- positive, uncorrelated `in subquery(...)` predicates, including nested and
+  row-valued membership;
 - per-table predicates combined across bindings with `and`, `or`, and `not`;
 - Ecto's separate `where` and `or_where` clauses; and
 - schema prefixes and database field-source names.
@@ -50,6 +52,36 @@ Phoenix.Sync pushes the local predicate into the relationship subquery's
 `WHERE`. A non-key predicate involving both sides remains unsupported, as do
 filters declared in association metadata.
 
+Ecto subqueries compile to Electric's native `IN (SELECT ...)` grammar when
+they are:
+
+- uncorrelated and used as the right side of a direct positive `in` predicate
+  in `where` or `or_where`;
+- projected as one source field or a tuple of source fields;
+- based on one schema source without joins at each subquery level; and
+- free of ordering, limits, offsets, grouping, aggregation, distinct results,
+  windows, CTEs, combinations, preloads, and locks.
+
+The same constraints apply recursively, so supported subqueries may be nested.
+Electric subset snapshots do not accept subqueries; this syntax applies only to
+the main live-shape predicate.
+
+Ecto does not expose native row-valued `in subquery` syntax. Use a field-only
+tuple fragment whose raw text is limited to tuple punctuation:
+
+```elixir
+keys =
+  from membership in Membership,
+    select: {membership.board_id, membership.tenant_id}
+
+from episode in Episode,
+  where:
+    fragment("(?, ?)", episode.board_id, episode.tenant_id) in subquery(keys)
+```
+
+Phoenix.Sync recognizes only that exact fragment structure and quotes every
+field itself; arbitrary fragments are not forwarded as subquery SQL.
+
 `order_by`, `limit`, and `offset` are available for on-demand subset snapshots,
 not as continuously maintained live-shape ordering or pagination. They are
 therefore deliberately rejected when attached to the live Ecto query itself.
@@ -58,22 +90,6 @@ therefore deliberately rejected when attached to the live Ecto query itself.
 
 The following additions fit Electric's existing model and are reasonable
 targets for the Ecto compiler.
-
-### Constrained Ecto subqueries
-
-Electric supports nested `IN (SELECT ...)` subqueries whose projection consists
-of plain columns from one table. Phoenix.Sync could accept the corresponding
-Ecto `subquery/1` forms when they are:
-
-- uncorrelated;
-- used with `in` or a row-valued `in`;
-- projected from ordinary columns;
-- based on one schema source per subquery level; and
-- free of ordering, limits, grouping, aggregation, windows, CTEs, and locks.
-
-This would expose Electric's native grammar without suggesting that arbitrary
-Ecto subqueries are supported. Electric subset snapshots do not accept
-subqueries, so this applies only to the main live-shape predicate.
 
 ### Safe negative membership
 
@@ -126,10 +142,9 @@ query as rows change.
 
 ## Suggested priority
 
-1. Constrained Ecto `IN (subquery(...))`, including row-valued membership.
-2. Association metadata filters.
-3. Safe negative membership with schema-nullability checks.
-4. Additional deterministic expressions and more precise diagnostics.
+1. Association metadata filters.
+2. Safe negative membership with schema-nullability checks.
+3. Additional deterministic expressions and more precise diagnostics.
 
 True lateral joins, arbitrary outer joins, joined projections, and aggregates
 should remain explicit non-goals until Electric exposes matching live-query

@@ -448,6 +448,27 @@ Boolean expressions may combine root and relationship predicates using `and`,
 predicate must still compare values from one table; direct comparisons between
 columns on different bindings are rejected.
 
+Uncorrelated Ecto `in subquery(...)` predicates compile to Electric's native
+relationship subqueries. Each subquery level must read one schema, select plain
+fields, and omit joins, ordering, limits, grouping, aggregates, windows, CTEs,
+and locks:
+
+```elixir
+memberships =
+  from membership in Membership,
+    where: membership.user_id == ^user_id,
+    select: membership.board_id
+
+from episode in Episode,
+  where: episode.board_id in subquery(memberships),
+  select: episode
+```
+
+Subqueries may be nested. Row-valued membership is also supported by selecting
+a tuple and using an exact field-only tuple fragment on the left, for example
+`fragment("(?, ?)", episode.board_id, episode.tenant_id)`. Negative membership
+remains rejected unless the projected key can eventually be proven non-null.
+
 The result remains a live set of `Episode` rows. Joined rows are used to decide
 membership but are not returned as a joined tuple or preloaded association
 graph.
