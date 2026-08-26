@@ -268,9 +268,7 @@ defmodule Phoenix.Sync.SandboxTest do
 
           snapshot = Jason.decode!(resp.resp_body)
 
-          resp =
-            Phoenix.ConnTest.build_conn()
-            |> Phoenix.ConnTest.get("/sync/todos", %{offset: offset, handle: handle})
+          resp = get_until_up_to_date("/sync/todos", offset, handle)
 
           assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "10200"}}] =
                    Jason.decode!(resp.resp_body)
@@ -358,9 +356,7 @@ defmodule Phoenix.Sync.SandboxTest do
 
           snapshot = Jason.decode!(resp.resp_body)
 
-          resp =
-            Phoenix.ConnTest.build_conn()
-            |> Phoenix.ConnTest.get(path, %{offset: offset, handle: handle})
+          resp = get_until_up_to_date(path, offset, handle)
 
           assert [%{"headers" => %{"control" => "up-to-date", "global_last_seen_lsn" => "10200"}}] =
                    Jason.decode!(resp.resp_body)
@@ -409,6 +405,30 @@ defmodule Phoenix.Sync.SandboxTest do
              ] = live
 
       Task.await_many([task1, task2])
+    end
+  end
+
+  defp get_until_up_to_date(path, offset, handle, pages_remaining \\ 2)
+
+  defp get_until_up_to_date(_path, _offset, _handle, 0) do
+    flunk("shape did not reach up-to-date before exhausting snapshot continuations")
+  end
+
+  defp get_until_up_to_date(path, offset, handle, pages_remaining) do
+    resp =
+      Phoenix.ConnTest.build_conn()
+      |> Phoenix.ConnTest.get(path, %{offset: offset, handle: handle})
+
+    case Plug.Conn.get_resp_header(resp, "electric-up-to-date") do
+      [_] ->
+        resp
+
+      [] ->
+        assert Jason.decode!(resp.resp_body) == []
+        [next_offset] = Plug.Conn.get_resp_header(resp, "electric-offset")
+        assert next_offset != offset
+
+        get_until_up_to_date(path, next_offset, handle, pages_remaining - 1)
     end
   end
 end
