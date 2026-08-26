@@ -460,7 +460,21 @@ if Code.ensure_loaded?(Ecto) do
       subquery = Enum.fetch!(where.subqueries, index)
 
       left_fields
-      |> membership_subquery!(subquery)
+      |> membership_subquery!(subquery, :positive)
+      |> relationship_predicate(binding, edges, sources)
+    end
+
+    defp boolean_expression(
+           {:not, _, [{:in, _, [left, {:subquery, index}]}]},
+           where,
+           edges,
+           sources
+         ) do
+      {binding, left_fields} = membership_fields!(left, sources)
+      subquery = Enum.fetch!(where.subqueries, index)
+
+      left_fields
+      |> membership_subquery!(subquery, :negative)
       |> relationship_predicate(binding, edges, sources)
     end
 
@@ -613,11 +627,15 @@ if Code.ensure_loaded?(Ecto) do
             ~s|fragment("(?, ...)", field, ...)|
     end
 
-    defp membership_subquery!(left_fields, %Ecto.SubQuery{query: query}) do
+    defp membership_subquery!(left_fields, %Ecto.SubQuery{query: query}, polarity) do
       validate_subquery!(query)
 
       source = source!(query.from.source, query.prefix || query.from.prefix, 0)
       selected_fields = subquery_select_fields!(query.select, source)
+
+      if polarity == :negative do
+        validate_non_null_membership_fields!(selected_fields, source.schema)
+      end
 
       if length(left_fields) != length(selected_fields) do
         raise ArgumentError,
@@ -630,14 +648,28 @@ if Code.ensure_loaded?(Ecto) do
 
       [
         quote_field_tuple(left_fields),
-        " IN (SELECT ",
-        Enum.map_join(selected_fields, ", ", &quote_identifier/1),
+        membership_operator(polarity),
+        Enum.map_join(selected_fields, ", ", &quote_identifier(&1.source)),
         " FROM ",
         quote_table(source),
         where_clause(where),
         ")"
       ]
       |> IO.iodata_to_binary()
+    end
+
+    defp membership_operator(:positive), do: " IN (SELECT "
+    defp membership_operator(:negative), do: " NOT IN (SELECT "
+
+    defp validate_non_null_membership_fields!(selected_fields, schema) do
+      primary_keys = MapSet.new(schema.__schema__(:primary_key))
+
+      unless Enum.all?(selected_fields, &MapSet.member?(primary_keys, &1.field)) do
+        raise ArgumentError,
+          message:
+            "Negative Ecto subquery membership requires every projected field to be a " <>
+              "non-null primary key; Ecto schema metadata cannot prove other fields non-null"
+      end
     end
 
     defp validate_subquery!(query) do
@@ -680,7 +712,7 @@ if Code.ensure_loaded?(Ecto) do
       |> Enum.map(fn expression ->
         case field_reference(expression) do
           {:ok, {0, field}} ->
-            field_source(source.schema, field)
+            %{field: field, source: field_source(source.schema, field)}
 
           _ ->
             raise ArgumentError,

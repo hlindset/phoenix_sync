@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Push joined-binding `on` filters into Electric relationship subqueries.
 - Compile positive, uncorrelated Ecto `in subquery(...)` predicates, including
   nested and row-valued membership.
+- Compile Ecto `not in subquery(...)` predicates when all projected fields are
+  non-null primary keys.
 - Preserve mixed-binding `and`, `or`, `not`, `where` and `or_where` predicates
   in relationship queries.
 - Stream Electric server-sent events through predefined shape routes.

@@ -64,6 +64,17 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
     end
   end
 
+  defmodule CompositeMembership do
+    use Ecto.Schema
+
+    @primary_key false
+    schema "composite_memberships" do
+      field :board_id, :integer, primary_key: true
+      field :tenant_id, :integer, primary_key: true
+      field :user_id, :string
+    end
+  end
+
   describe "new!/2" do
     test "raises if passed unknown options" do
       assert_raise ArgumentError, fn ->
@@ -392,6 +403,45 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       assert_raise ArgumentError, ~r/Negative Ecto subquery membership/, fn ->
         query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
       end
+    end
+
+    test "converts negative Ecto subquery membership over non-null primary keys" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^"blocked",
+          select: membership.id
+
+      query =
+        from episode in Episode,
+          where: episode.id not in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|"id" NOT IN (SELECT "id" FROM "board_memberships" WHERE ("user_id" = 'blocked'))|
+    end
+
+    test "converts row-valued negative membership over composite primary keys" do
+      import Ecto.Query
+
+      memberships =
+        from membership in CompositeMembership,
+          where: membership.user_id == ^"blocked",
+          select: {membership.board_id, membership.tenant_id}
+
+      query =
+        from episode in Episode,
+          where:
+            fragment("(?, ?)", episode.board_id, episode.tenant_id) not in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") NOT IN (SELECT "board_id", "tenant_id" FROM "composite_memberships" WHERE ("user_id" = 'blocked'))|
     end
 
     test "rejects subquery membership wrapped in another expression" do

@@ -24,6 +24,8 @@ Phoenix.Sync currently supports:
 - additional `on` predicates that reference only the newly joined binding;
 - positive, uncorrelated `in subquery(...)` predicates, including nested and
   row-valued membership;
+- negative, uncorrelated `not in subquery(...)` predicates when every projected
+  field is a schema primary key;
 - per-table predicates combined across bindings with `and`, `or`, and `not`;
 - Ecto's separate `where` and `or_where` clauses; and
 - schema prefixes and database field-source names.
@@ -59,14 +61,17 @@ relationship model.
 Ecto subqueries compile to Electric's native `IN (SELECT ...)` grammar when
 they are:
 
-- uncorrelated and used as the right side of a direct positive `in` predicate
-  in `where` or `or_where`;
+- uncorrelated and used as the right side of a direct `in` or safe `not in`
+  predicate in `where` or `or_where`;
 - projected as one source field or a tuple of source fields;
 - based on one schema source without joins at each subquery level; and
 - free of ordering, limits, offsets, grouping, aggregation, distinct results,
   windows, CTEs, combinations, preloads, and locks.
 
 The same constraints apply recursively, so supported subqueries may be nested.
+Negative membership additionally requires every projected field to be a schema
+primary key. Ecto does not expose database `NOT NULL` constraints for ordinary
+fields, so Phoenix.Sync deliberately cannot infer safety from a migration.
 Electric subset snapshots do not accept subqueries; this syntax applies only to
 the main live-shape predicate.
 
@@ -94,13 +99,6 @@ therefore deliberately rejected when attached to the live Ecto query itself.
 
 The following additions fit Electric's existing model and are reasonable
 targets for the Ecto compiler.
-
-### Safe negative membership
-
-Some anti-join queries can compile to `NOT IN (SELECT ...)`. This is only safe
-when nullability preserves the intended PostgreSQL semantics. Phoenix.Sync
-should require a provably non-null projected membership key rather than
-silently treating a general `NOT EXISTS` or left anti-join as `NOT IN`.
 
 ### More deterministic filter expressions
 
@@ -146,8 +144,7 @@ query as rows change.
 
 ## Suggested priority
 
-1. Safe negative membership with schema-nullability checks.
-2. Additional deterministic expressions and more precise diagnostics.
+1. Additional deterministic expressions and more precise diagnostics.
 
 True lateral joins, arbitrary outer joins, joined projections, and aggregates
 should remain explicit non-goals until Electric exposes matching live-query
