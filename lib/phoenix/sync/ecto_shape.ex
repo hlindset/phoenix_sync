@@ -172,14 +172,15 @@ if Code.ensure_loaded?(Ecto) do
                 inspect(join.qual)
         end
 
-        {parent_binding, parent_field, child_field} =
+        {parent_binding, parent_fields, child_fields} =
           relationship_fields!(join, child_binding, sources)
 
         %{
           parent: parent_binding,
-          parent_field: field_source(sources[parent_binding].schema, parent_field),
+          parent_fields:
+            Enum.map(parent_fields, &field_source(sources[parent_binding].schema, &1)),
           child: child_binding,
-          child_field: field_source(sources[child_binding].schema, child_field)
+          child_fields: Enum.map(child_fields, &field_source(sources[child_binding].schema, &1))
         }
       end)
     end
@@ -190,7 +191,7 @@ if Code.ensure_loaded?(Ecto) do
            sources
          ) do
       association = association!(sources[parent].schema, association, parent)
-      {parent, association.owner_key, association.related_key}
+      {parent, [association.owner_key], [association.related_key]}
     end
 
     defp relationship_fields!(%{assoc: {_parent, _association}, source: nil}, binding, _sources) do
@@ -201,22 +202,48 @@ if Code.ensure_loaded?(Ecto) do
     end
 
     defp relationship_fields!(join, child_binding, _sources) do
-      {left_binding, left_field, right_binding, right_field} =
-        equality_fields!(join.on.expr, child_binding)
+      relationships =
+        join.on.expr
+        |> equality_fields!(child_binding)
+        |> Enum.map(&orient_relationship!(&1, child_binding))
 
-      cond do
-        left_binding == child_binding and right_binding < child_binding ->
-          {right_binding, right_field, left_field}
+      case Enum.group_by(relationships, &elem(&1, 0)) |> Map.to_list() do
+        [{parent_binding, relationships}] ->
+          {parent_fields, child_fields} =
+            Enum.map(relationships, fn {_parent_binding, parent_field, child_field} ->
+              {parent_field, child_field}
+            end)
+            |> Enum.unzip()
 
-        right_binding == child_binding and left_binding < child_binding ->
-          {left_binding, left_field, right_field}
+          {parent_binding, parent_fields, child_fields}
 
-        true ->
+        _relationships ->
           raise ArgumentError,
             message:
-              "Ecto join binding #{child_binding} must equate one of its fields with a field " <>
-                "from an earlier binding"
+              "Ecto join binding #{child_binding} must equate its fields with fields from " <>
+                "one earlier binding"
       end
+    end
+
+    defp orient_relationship!(
+           {child_binding, child_field, parent_binding, parent_field},
+           child_binding
+         )
+         when parent_binding < child_binding,
+         do: {parent_binding, parent_field, child_field}
+
+    defp orient_relationship!(
+           {parent_binding, parent_field, child_binding, child_field},
+           child_binding
+         )
+         when parent_binding < child_binding,
+         do: {parent_binding, parent_field, child_field}
+
+    defp orient_relationship!(_relationship, child_binding) do
+      raise ArgumentError,
+        message:
+          "Ecto join binding #{child_binding} must equate one of its fields with a field " <>
+            "from an earlier binding"
     end
 
     defp association!(schema, field, binding) do
@@ -236,18 +263,22 @@ if Code.ensure_loaded?(Ecto) do
       end
     end
 
+    defp equality_fields!({:and, _, [left, right]}, binding) do
+      equality_fields!(left, binding) ++ equality_fields!(right, binding)
+    end
+
     defp equality_fields!(
            {:==, _, [left, right]} = expression,
            binding
          ) do
       with {:ok, {left_binding, left_field}} <- field_reference(left),
            {:ok, {right_binding, right_field}} <- field_reference(right) do
-        {left_binding, left_field, right_binding, right_field}
+        [{left_binding, left_field, right_binding, right_field}]
       else
         _ ->
           raise ArgumentError,
             message:
-              "Ecto join binding #{binding} must use a single field equality, got: " <>
+              "Ecto join binding #{binding} must use field equalities joined with AND, got: " <>
                 inspect(expression)
       end
     end
@@ -255,7 +286,7 @@ if Code.ensure_loaded?(Ecto) do
     defp equality_fields!(expression, binding) do
       raise ArgumentError,
         message:
-          "Ecto join binding #{binding} must use a single field equality, got: " <>
+          "Ecto join binding #{binding} must use field equalities joined with AND, got: " <>
             inspect(expression)
     end
 
@@ -305,9 +336,9 @@ if Code.ensure_loaded?(Ecto) do
         source = sources[edge.child]
 
         [
-          quote_identifier(edge.parent_field),
+          quote_field_tuple(edge.parent_fields),
           " IN (SELECT ",
-          quote_identifier(edge.child_field),
+          Enum.map_join(edge.child_fields, ", ", &quote_identifier/1),
           " FROM ",
           quote_table(source),
           if(where, do: [" WHERE ", where], else: []),
@@ -438,6 +469,12 @@ if Code.ensure_loaded?(Ecto) do
 
     defp quote_table(%{table: table, prefix: prefix}) do
       quote_identifier(prefix) <> "." <> quote_identifier(table)
+    end
+
+    defp quote_field_tuple([field]), do: quote_identifier(field)
+
+    defp quote_field_tuple(fields) do
+      "(" <> Enum.map_join(fields, ", ", &quote_identifier/1) <> ")"
     end
 
     defp quote_identifier(identifier) do

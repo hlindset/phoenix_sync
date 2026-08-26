@@ -427,10 +427,11 @@ sync_render(conn, params, Todos.Todo)
 ```
 
 Ecto queries support root-table `where` conditions and inner equi-joins. A join
-must compare one field on the new binding with one field on an earlier binding,
-and each additional predicate must reference only one binding. Phoenix.Sync
-converts these joins into Electric relationship subqueries, including nested
-joins and `assoc/2` joins:
+must compare one or more fields on the new binding with fields on one earlier
+binding. Composite joins combine those equalities with `and`. Each additional
+predicate must reference only one binding. Phoenix.Sync converts these joins
+into Electric relationship subqueries, including nested joins and `assoc/2`
+joins:
 
 ```elixir
 from episode in Episode,

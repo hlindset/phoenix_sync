@@ -48,6 +48,7 @@ defmodule Phoenix.Sync.ControllerTest do
 
     schema "boards" do
       field :active, :boolean
+      field :tenant_id, :string
     end
   end
 
@@ -58,6 +59,7 @@ defmodule Phoenix.Sync.ControllerTest do
 
     schema "episodes" do
       field :board_id, :string
+      field :tenant_id, :string
       field :title, :string
     end
   end
@@ -69,6 +71,7 @@ defmodule Phoenix.Sync.ControllerTest do
 
     schema "board_memberships" do
       field :board_id, :string
+      field :tenant_id, :string
       field :user_id, :string
     end
   end
@@ -96,9 +99,13 @@ defmodule Phoenix.Sync.ControllerTest do
       query =
         from episode in Episode,
           join: board in Board,
-          on: episode.board_id == board.id,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id,
           join: membership in Membership,
-          on: board.id == membership.board_id,
+          on:
+            board.id == membership.board_id and
+              board.tenant_id == membership.tenant_id,
           where: board.active == true,
           where: membership.user_id == ^user_id,
           select: episode
@@ -236,37 +243,37 @@ defmodule Phoenix.Sync.ControllerTest do
   defp with_relationship_tables(%{relationship: true, db_conn: db_conn}) do
     Postgrex.query!(
       db_conn,
-      "CREATE TABLE boards (id text PRIMARY KEY, active boolean NOT NULL)",
+      "CREATE TABLE boards (id text PRIMARY KEY, tenant_id text NOT NULL, active boolean NOT NULL)",
       []
     )
 
     Postgrex.query!(
       db_conn,
-      "CREATE TABLE episodes (id text PRIMARY KEY, board_id text NOT NULL, title text NOT NULL)",
+      "CREATE TABLE episodes (id text PRIMARY KEY, tenant_id text NOT NULL, board_id text NOT NULL, title text NOT NULL)",
       []
     )
 
     Postgrex.query!(
       db_conn,
-      "CREATE TABLE board_memberships (id text PRIMARY KEY, board_id text NOT NULL, user_id text NOT NULL)",
+      "CREATE TABLE board_memberships (id text PRIMARY KEY, tenant_id text NOT NULL, board_id text NOT NULL, user_id text NOT NULL)",
       []
     )
 
     Postgrex.query!(
       db_conn,
-      "INSERT INTO boards (id, active) VALUES ('board-1', true), ('board-2', true), ('board-3', false)",
+      "INSERT INTO boards (id, tenant_id, active) VALUES ('board-1', 'tenant-1', true), ('board-2', 'tenant-1', true), ('board-3', 'tenant-1', false)",
       []
     )
 
     Postgrex.query!(
       db_conn,
-      "INSERT INTO episodes (id, board_id, title) VALUES ('episode-1', 'board-1', 'mine'), ('episode-2', 'board-2', 'theirs'), ('episode-3', 'board-3', 'inactive')",
+      "INSERT INTO episodes (id, tenant_id, board_id, title) VALUES ('episode-1', 'tenant-1', 'board-1', 'mine'), ('episode-2', 'tenant-1', 'board-2', 'theirs'), ('episode-3', 'tenant-1', 'board-3', 'inactive')",
       []
     )
 
     Postgrex.query!(
       db_conn,
-      "INSERT INTO board_memberships (id, board_id, user_id) VALUES ('membership-1', 'board-1', 'user-1'), ('membership-2', 'board-2', 'user-2'), ('membership-3', 'board-3', 'user-1')",
+      "INSERT INTO board_memberships (id, tenant_id, board_id, user_id) VALUES ('membership-1', 'tenant-1', 'board-1', 'user-1'), ('membership-2', 'tenant-1', 'board-2', 'user-2'), ('membership-3', 'tenant-1', 'board-3', 'user-1')",
       []
     )
 

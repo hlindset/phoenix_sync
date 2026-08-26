@@ -28,6 +28,7 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
     schema "boards" do
       field :active, :boolean
+      field :tenant_id, :integer
     end
   end
 
@@ -37,6 +38,7 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
     schema "episodes" do
       field :board_id, :integer
       field :published, :boolean
+      field :tenant_id, :integer
       field :title, :string
       belongs_to :board, Board, define_field: false
     end
@@ -224,7 +226,7 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
 
       assert shape.table == "episodes"
-      assert shape.columns == ["id", "board_id", "published", "title"]
+      assert shape.columns == ["id", "board_id", "published", "tenant_id", "title"]
       assert shape.where =~ ~s|("published" = TRUE)|
 
       assert shape.where =~
@@ -237,6 +239,24 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert shape.where =~ ~s|("user_id" = 'user-1')|
       assert shape.where =~ ~s|(("role"::text) = 'editor')|
+    end
+
+    test "converts composite inner equi-joins into row relationship subqueries" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id,
+          where: board.active == true,
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") IN (SELECT "id", "tenant_id" FROM "boards" WHERE ("active" = TRUE))|
     end
 
     test "converts Ecto association joins into relationship subqueries" do
