@@ -342,6 +342,44 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                ~s|("board_id", "tenant_id") IN (SELECT "board_id", "tenant_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
     end
 
+    test "converts plain-field map projections in Ecto IN subqueries" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^"user-1",
+          select: %{board: membership.board_id, tenant: membership.tenant_id}
+
+      query =
+        from episode in Episode,
+          where: fragment("(?, ?)", episode.board_id, episode.tenant_id) in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") IN (SELECT "board_id", "tenant_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
+    end
+
+    test "converts Ecto map/2 projections in IN subqueries" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          where: membership.user_id == ^"user-1",
+          select: map(membership, [:board_id, :tenant_id])
+
+      query =
+        from episode in Episode,
+          where: fragment("(?, ?)", episode.board_id, episode.tenant_id) in subquery(memberships),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") IN (SELECT "board_id", "tenant_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
+    end
+
     test "converts nested Ecto IN subqueries" do
       import Ecto.Query
 

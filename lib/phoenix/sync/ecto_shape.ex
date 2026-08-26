@@ -706,11 +706,11 @@ if Code.ensure_loaded?(Ecto) do
       correlated?
     end
 
-    defp subquery_select_fields!(%Ecto.Query.SelectExpr{expr: expression}, source) do
-      expression
+    defp subquery_select_fields!(%Ecto.Query.SelectExpr{} = select, source) do
+      select
       |> subquery_select_expressions!()
       |> Enum.map(fn expression ->
-        case field_reference(expression) do
+        case selected_field_reference(expression) do
           {:ok, {0, field}} ->
             %{field: field, source: field_source(source.schema, field)}
 
@@ -726,8 +726,30 @@ if Code.ensure_loaded?(Ecto) do
         message: "Ecto shape subqueries must select one or more source fields"
     end
 
-    defp subquery_select_expressions!({:{}, _, [_ | _] = expressions}), do: expressions
-    defp subquery_select_expressions!(expression), do: [expression]
+    defp selected_field_reference({:selected_field, field}) when is_atom(field),
+      do: {:ok, {0, field}}
+
+    defp selected_field_reference(expression), do: field_reference(expression)
+
+    defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
+           expr: {:&, _, [0]},
+           take: %{0 => {:map, [_ | _] = fields}}
+         }) do
+      Enum.map(fields, &{:selected_field, &1})
+    end
+
+    defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
+           expr: {:%{}, _, [_ | _] = entries}
+         }) do
+      Enum.map(entries, fn {_key, expression} -> expression end)
+    end
+
+    defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
+           expr: {:{}, _, [_ | _] = expressions}
+         }),
+         do: expressions
+
+    defp subquery_select_expressions!(%Ecto.Query.SelectExpr{expr: expression}), do: [expression]
 
     defp parameter_indexes(expression) do
       {_expression, indexes} =

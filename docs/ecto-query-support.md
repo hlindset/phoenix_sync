@@ -63,7 +63,8 @@ they are:
 
 - uncorrelated and used as the right side of a direct `in` or safe `not in`
   predicate in `where` or `or_where`;
-- projected as one source field or a tuple of source fields;
+- projected as one source field, a tuple of source fields, a plain-field map,
+  or `map(binding, fields)`;
 - based on one schema source without joins at each subquery level; and
 - free of ordering, limits, offsets, grouping, aggregation, distinct results,
   windows, CTEs, combinations, preloads, and locks.
@@ -90,6 +91,8 @@ from episode in Episode,
 
 Phoenix.Sync recognizes only that exact fragment structure and quotes every
 field itself; arbitrary fragments are not forwarded as subquery SQL.
+Map projections use their declared value/field order, which must match the
+left-hand row fragment.
 
 `order_by`, `limit`, and `offset` are available for on-demand subset snapshots,
 not as continuously maintained live-shape ordering or pagination. They are
