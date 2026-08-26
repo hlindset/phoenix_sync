@@ -986,6 +986,18 @@ defmodule Phoenix.Sync.Electric do
       Map.update!(response, :body, &do_consume_stream(&1))
     end
 
+    @doc false
+    def await_snapshot_start(
+          %Electric.Shapes.Api.Request{
+            api: %{stack_id: stack_id},
+            handle: handle
+          } = request
+        )
+        when is_binary(handle) do
+      snapshot_status = Electric.ShapeCache.await_snapshot_start(handle, stack_id)
+      %{request | snapshot_status: snapshot_status}
+    end
+
     defp do_consume_stream(body) do
       Enum.to_list(body)
     end
@@ -1010,6 +1022,7 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
 
       case Shapes.Api.validate(api, params) do
         {:ok, request} ->
+          request = Phoenix.Sync.Electric.await_snapshot_start(request)
           response = Shapes.Api.serve_shape_response(request)
           conn = content_type(conn)
           {conn, response} = Phoenix.Sync.Electric.prepare_compression(conn, response)
@@ -1052,6 +1065,8 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
 
       case Shapes.Api.validate(api, params) do
         {:ok, request} ->
+          request = Phoenix.Sync.Electric.await_snapshot_start(request)
+
           {
             request,
             Shapes.Api.serve_shape_response(request)

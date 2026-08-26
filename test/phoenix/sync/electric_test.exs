@@ -167,6 +167,43 @@ defmodule Phoenix.Sync.ElectricTest do
              ] = Jason.decode!(resp.resp_body)
     end
 
+    @tag long_poll_timeout: 5_000
+    test "activates changes-only shapes before returning offset=now", ctx do
+      initial =
+        conn(:get, "/shapes", %{
+          "table" => "things",
+          "offset" => "now",
+          "log" => "changes_only"
+        })
+        |> call(ctx)
+
+      assert initial.status == 200
+      assert [handle] = Plug.Conn.get_resp_header(initial, "electric-handle")
+      assert [offset] = Plug.Conn.get_resp_header(initial, "electric-offset")
+
+      Postgrex.query!(ctx.db_conn, "INSERT INTO things (value) VALUES ('four')", [])
+
+      changes =
+        conn(:get, "/shapes", %{
+          "table" => "things",
+          "offset" => offset,
+          "handle" => handle,
+          "live" => "true",
+          "log" => "changes_only"
+        })
+        |> call(ctx)
+
+      assert changes.status == 200
+
+      assert [
+               %{
+                 "headers" => %{"operation" => "insert"},
+                 "value" => %{"value" => "four"}
+               }
+               | _controls
+             ] = Jason.decode!(changes.resp_body)
+    end
+
     test "makes mounted shape responses eligible for compression", ctx do
       resp =
         conn(:get, "/shapes", %{"table" => "things", "offset" => "-1"})

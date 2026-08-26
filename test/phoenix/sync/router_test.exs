@@ -61,6 +61,12 @@ defmodule Phoenix.Sync.RouterTest do
         table: "episodes",
         where: "board_id IN (SELECT id FROM boards WHERE active = true)"
 
+      sync "/active-board-episode-changes",
+        table: "episodes",
+        where: "board_id IN (SELECT id FROM boards WHERE active = true)",
+        queryable_columns: ["id", "board_id", "title"],
+        log: :changes_only
+
       # support shapes from a query, passed as the 2nd arg
       sync "/query-where", Support.Todo, where: "completed = false"
 
@@ -432,6 +438,70 @@ defmodule Phoenix.Sync.RouterTest do
                snapshot.resp_body
                |> Jason.decode!()
                |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+    end
+
+    @tag relationship: true
+    @tag long_poll_timeout: 5_000
+    test "streams changes outside a materialized relationship subset", ctx do
+      initial =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/sync/active-board-episode-changes", %{offset: "now"})
+
+      assert initial.status == 200
+      assert [handle] = Plug.Conn.get_resp_header(initial, "electric-handle")
+      assert [offset] = Plug.Conn.get_resp_header(initial, "electric-offset")
+
+      subset =
+        Phoenix.ConnTest.build_conn()
+        |> Plug.Conn.put_req_header("content-type", "application/json")
+        |> Phoenix.ConnTest.post(
+          "/sync/active-board-episode-changes?offset=now",
+          Jason.encode!(%{"order_by" => "id ASC", "limit" => 1})
+        )
+
+      assert subset.status == 200
+
+      assert %{
+               "data" => [
+                 %{"value" => %{"id" => "episode-1", "title" => "active episode"}}
+               ]
+             } = Jason.decode!(subset.resp_body)
+
+      Postgrex.query!(
+        ctx.db_conn,
+        """
+        INSERT INTO episodes (id, board_id, title)
+        SELECT 'episode-bulk-' || lpad(i::text, 3, '0'), 'board-1', 'bulk ' || i
+        FROM generate_series(1, 100) AS i
+        """,
+        []
+      )
+
+      changes =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/sync/active-board-episode-changes", %{
+          offset: offset,
+          handle: handle,
+          live: "true"
+        })
+
+      assert changes.status == 200
+
+      changed_ids =
+        changes.resp_body
+        |> Jason.decode!()
+        |> Enum.flat_map(fn
+          %{"headers" => %{"operation" => "insert"}, "value" => %{"id" => id}} -> [id]
+          _message -> []
+        end)
+
+      assert length(changed_ids) == 100
+
+      assert Enum.sort(changed_ids) ==
+               Enum.map(
+                 1..100,
+                 &"episode-bulk-#{String.pad_leading(to_string(&1), 3, "0")}"
+               )
     end
 
     @tag table: {

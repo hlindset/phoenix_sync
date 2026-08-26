@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Wait for embedded shapes to become replication-ready before returning
+  `offset=now` or subset responses.
 - Prevent browser credentials, cookies and HTTP hop-by-hop headers from crossing
   the Electric HTTP proxy boundary in either direction.
 - Return focused Ecto compiler errors for malformed subquery indexes, bindings,

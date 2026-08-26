@@ -28,6 +28,7 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
 
         case Shapes.Api.validate(api, params) do
           {:ok, request} ->
+            request = Phoenix.Sync.Electric.await_snapshot_start(request)
             response = Shapes.Api.serve_shape_response(request)
 
             response =
@@ -65,6 +66,7 @@ if Code.ensure_loaded?(Electric.Shapes.Api) do
         if transform_fun = PredefinedShape.transform_fun(shape) do
           case Shapes.Api.validate(api, params) do
             {:ok, request} ->
+              request = Phoenix.Sync.Electric.await_snapshot_start(request)
               response = Shapes.Api.serve_shape_response(request)
               response = Map.update!(response, :body, &apply_transform(&1, transform_fun))
               {request, response}
