@@ -29,6 +29,10 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
     schema "boards" do
       field :active, :boolean
       field :tenant_id, :integer
+
+      has_many :published_episodes, Phoenix.Sync.PredefinedShapeTest.Episode,
+        foreign_key: :board_id,
+        where: [published: true]
     end
   end
 
@@ -41,6 +45,11 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       field :tenant_id, :integer
       field :title, :string
       belongs_to :board, Board, define_field: false
+
+      belongs_to :active_board, Board,
+        define_field: false,
+        foreign_key: :board_id,
+        where: [active: true]
     end
   end
 
@@ -432,6 +441,38 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert shape.where ==
                ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE ("active" = TRUE))|
+    end
+
+    test "preserves association metadata filters in relationship subqueries" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in assoc(episode, :active_board),
+          where: board.tenant_id in ^[1, 2],
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~
+               ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE|
+
+      assert shape.where =~ ~s|("active" = TRUE)|
+      assert shape.where =~ ~s|("tenant_id" IN (1,2))|
+    end
+
+    test "preserves has-many association metadata filters" do
+      import Ecto.Query
+
+      query =
+        from board in Board,
+          join: episode in assoc(board, :published_episodes),
+          select: board
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|"id" IN (SELECT "board_id" FROM "episodes" WHERE ("published" = TRUE))|
     end
 
     test "preserves mixed-binding boolean expressions" do

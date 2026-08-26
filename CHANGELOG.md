@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Support native Electric relationship/subquery shapes, including move-out deletes.
 - Compile Ecto inner, association, nested and composite relationship joins into
   Electric membership subqueries.
+- Preserve direct-association `where:` metadata in Electric relationship
+  subqueries.
 - Push joined-binding `on` filters into Electric relationship subqueries.
 - Compile positive, uncorrelated Ecto `in subquery(...)` predicates, including
   nested and row-valued membership.

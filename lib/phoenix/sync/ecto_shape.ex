@@ -219,7 +219,11 @@ if Code.ensure_loaded?(Ecto) do
             Enum.map(parent_fields, &field_source(sources[parent_binding].schema, &1)),
           child: child_binding,
           child_fields: Enum.map(child_fields, &field_source(sources[child_binding].schema, &1)),
-          where: join_filter_where(filter, join.on, child_binding, sources)
+          where:
+            combine_where([
+              association_filter_where(join, child_binding, sources),
+              join_filter_where(filter, join.on, child_binding, sources)
+            ])
         }
       end)
     end
@@ -335,6 +339,31 @@ if Code.ensure_loaded?(Ecto) do
       expression_where(child_binding, filter, where, sources)
     end
 
+    defp association_filter_where(
+           %{assoc: {parent, field}, source: nil},
+           child_binding,
+           sources
+         ) do
+      association = association!(sources[parent].schema, field, child_binding)
+
+      case association.where do
+        [] ->
+          nil
+
+        conditions ->
+          source = Map.fetch!(sources, child_binding)
+
+          source.schema
+          |> Ecto.Queryable.to_query()
+          |> put_source(source)
+          |> Ecto.Association.combine_assoc_query(conditions)
+          |> simple_shape!([])
+          |> Map.fetch!(:where)
+      end
+    end
+
+    defp association_filter_where(_join, _child_binding, _sources), do: nil
+
     defp orient_relationship!(
            {child_binding, child_field, parent_binding, parent_field},
            child_binding
@@ -356,16 +385,10 @@ if Code.ensure_loaded?(Ecto) do
             "from an earlier binding"
     end
 
-    defp association!(schema, field, binding) do
+    defp association!(schema, field, _binding) do
       case schema.__schema__(:association, field) do
-        %{where: []} = association ->
+        %{where: where} = association when is_list(where) ->
           association
-
-        %{where: [_ | _]} ->
-          raise ArgumentError,
-            message:
-              "Ecto association join binding #{binding} uses association-level filters, " <>
-                "which cannot be represented by an Electric relationship shape"
 
         nil ->
           raise ArgumentError,

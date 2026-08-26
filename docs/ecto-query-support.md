@@ -16,6 +16,8 @@ Phoenix.Sync currently supports:
 - root-table filters supported by `Electric.Client.EctoAdapter`;
 - pinned parameters and string-backed `Ecto.Enum` predicates;
 - explicit and `assoc/2` inner equi-joins;
+- direct-association `where:` metadata on `belongs_to`, `has_one`, and
+  `has_many` relationship joins;
 - nested relationship joins;
 - composite joins whose field equalities all connect the new binding to the
   same earlier binding;
@@ -49,8 +51,10 @@ on: episode.board_id == board.id and board.archived == false
 ```
 
 Phoenix.Sync pushes the local predicate into the relationship subquery's
-`WHERE`. A non-key predicate involving both sides remains unsupported, as do
-filters declared in association metadata.
+`WHERE`. It also preserves a direct association's `where:` metadata as a
+related-table predicate. A non-key predicate involving both sides remains
+unsupported. Many-to-many join-table predicates remain outside the direct
+relationship model.
 
 Ecto subqueries compile to Electric's native `IN (SELECT ...)` grammar when
 they are:
@@ -142,9 +146,8 @@ query as rows change.
 
 ## Suggested priority
 
-1. Association metadata filters.
-2. Safe negative membership with schema-nullability checks.
-3. Additional deterministic expressions and more precise diagnostics.
+1. Safe negative membership with schema-nullability checks.
+2. Additional deterministic expressions and more precise diagnostics.
 
 True lateral joins, arbitrary outer joins, joined projections, and aggregates
 should remain explicit non-goals until Electric exposes matching live-query
