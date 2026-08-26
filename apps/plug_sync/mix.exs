@@ -28,7 +28,7 @@ defmodule PlugSync.MixProject do
       {:ecto_sql, "~> 3.0"},
       {:electric, "~> 1.7.12", override: true},
       {:phoenix_sync, [path: "../..", override: true]},
-      {:igniter, "~> 0.6"}
+      {:igniter, "~> 0.8.3"}
     ]
   end
 end
