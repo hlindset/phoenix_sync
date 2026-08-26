@@ -33,6 +33,10 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       has_many :published_episodes, Phoenix.Sync.PredefinedShapeTest.Episode,
         foreign_key: :board_id,
         where: [published: true]
+
+      many_to_many :memberships, Phoenix.Sync.PredefinedShapeTest.Membership,
+        join_through: "board_membership_links",
+        join_keys: [board_id: :id, membership_id: :id]
     end
   end
 
@@ -292,6 +296,18 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE (("tenant_id"::text) = '7'))|
     end
 
+    test "reports keyword fragments with their Ecto binding" do
+      import Ecto.Query
+
+      query = from(cow in Cow, where: fragment(name: ["$eq": "Daisy"]))
+
+      assert_raise ArgumentError,
+                   ~r/Ecto filter on binding 0 uses a keyword or interpolated fragment/,
+                   fn ->
+                     query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+                   end
+    end
+
     test "converts inner equi-joins into relationship subqueries" do
       import Ecto.Query
 
@@ -443,6 +459,25 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                ~s|("board_id", "tenant_id") IN (SELECT "board_id", "tenant_id" FROM "board_memberships" WHERE ("user_id" = 'user-1'))|
     end
 
+    test "reports the computed entry in a subquery map projection" do
+      import Ecto.Query
+
+      memberships =
+        from membership in Membership,
+          select: %{board: membership.board_id + 1}
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      assert_raise ArgumentError,
+                   ~r/map projection key :board must select a plain source field/,
+                   fn ->
+                     query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+                   end
+    end
+
     test "converts nested Ecto IN subqueries" do
       import Ecto.Query
 
@@ -560,6 +595,45 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       end
     end
 
+    test "reports a missing subquery index in a manually constructed query" do
+      import Ecto.Query
+
+      memberships = from membership in Membership, select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      [where] = query.wheres
+      {:in, meta, [left, {:subquery, 0}]} = where.expr
+      query = %{query | wheres: [%{where | expr: {:in, meta, [left, {:subquery, 9}]}}]}
+
+      assert_raise ArgumentError, ~r/references missing Ecto subquery index 9/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
+    test "reports a missing binding in a manually constructed membership predicate" do
+      import Ecto.Query
+
+      memberships = from membership in Membership, select: membership.board_id
+
+      query =
+        from episode in Episode,
+          where: episode.board_id in subquery(memberships),
+          select: episode
+
+      [where] = query.wheres
+      {:in, meta, [_left, subquery]} = where.expr
+      missing_field = {{:., [], [{:&, [], [9]}, :board_id]}, [], []}
+      query = %{query | wheres: [%{where | expr: {:in, meta, [missing_field, subquery]}}]}
+
+      assert_raise ArgumentError, ~r/references missing Ecto binding 9/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
+    end
+
     test "rejects ordering and limits in Ecto shape subqueries" do
       import Ecto.Query
 
@@ -624,6 +698,19 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
 
       assert shape.where ==
                ~s|"id" IN (SELECT "board_id" FROM "episodes" WHERE ("published" = TRUE))|
+    end
+
+    test "reports unsupported many-to-many association joins" do
+      import Ecto.Query
+
+      query =
+        from board in Board,
+          join: membership in assoc(board, :memberships),
+          select: board
+
+      assert_raise ArgumentError, ~r/many-to-many association.*join table/, fn ->
+        query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+      end
     end
 
     test "preserves mixed-binding boolean expressions" do

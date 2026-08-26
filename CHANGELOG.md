@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Return focused Ecto compiler errors for malformed subquery indexes, bindings,
+  projections, association joins, and fragments.
 - Forward HTTP request options, including custom Finch pools, to the Electric client.
 - Handle empty sandbox transactions and PostgreSQL range values without crashing.
 - Expose Electric's `electric-has-data` and `retry-after` response headers through CORS.

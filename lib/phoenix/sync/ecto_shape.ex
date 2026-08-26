@@ -387,6 +387,18 @@ if Code.ensure_loaded?(Ecto) do
 
     defp association!(schema, field, _binding) do
       case schema.__schema__(:association, field) do
+        %Ecto.Association.ManyToMany{} ->
+          raise ArgumentError,
+            message:
+              "Ecto many-to-many association #{inspect(field)} on #{inspect(schema)} " <>
+                "requires a join table, which a direct Electric relationship join cannot represent"
+
+        %Ecto.Association.HasThrough{} ->
+          raise ArgumentError,
+            message:
+              "Ecto through association #{inspect(field)} on #{inspect(schema)} must be " <>
+                "expressed as explicit relationship joins"
+
         %{where: where} = association when is_list(where) ->
           association
 
@@ -457,7 +469,7 @@ if Code.ensure_loaded?(Ecto) do
 
     defp boolean_expression({:in, _, [left, {:subquery, index}]}, where, edges, sources) do
       {binding, left_fields} = membership_fields!(left, sources)
-      subquery = Enum.fetch!(where.subqueries, index)
+      subquery = fetch_subquery!(where, index)
 
       left_fields
       |> membership_subquery!(subquery, :positive)
@@ -471,7 +483,7 @@ if Code.ensure_loaded?(Ecto) do
            sources
          ) do
       {binding, left_fields} = membership_fields!(left, sources)
-      subquery = Enum.fetch!(where.subqueries, index)
+      subquery = fetch_subquery!(where, index)
 
       left_fields
       |> membership_subquery!(subquery, :negative)
@@ -571,8 +583,14 @@ if Code.ensure_loaded?(Ecto) do
 
       case Enum.uniq(bindings) do
         [binding] ->
-          source = Map.fetch!(sources, binding)
-          {binding, Enum.map(fields, &field_source(source.schema, &1))}
+          case Map.fetch(sources, binding) do
+            {:ok, source} ->
+              {binding, Enum.map(fields, &field_source(source.schema, &1))}
+
+            :error ->
+              raise ArgumentError,
+                message: "Ecto subquery membership references missing Ecto binding #{binding}"
+          end
 
         bindings ->
           raise ArgumentError,
@@ -580,6 +598,25 @@ if Code.ensure_loaded?(Ecto) do
               "The left side of an Ecto IN subquery references multiple bindings " <>
                 inspect(bindings)
       end
+    end
+
+    defp fetch_subquery!(%{subqueries: subqueries}, index)
+         when is_integer(index) and index >= 0 do
+      case Enum.fetch(subqueries, index) do
+        {:ok, subquery} ->
+          subquery
+
+        :error ->
+          raise ArgumentError,
+            message:
+              "Ecto membership predicate references missing Ecto subquery index #{index}; " <>
+                "the containing expression has #{length(subqueries)} subqueries"
+      end
+    end
+
+    defp fetch_subquery!(_where, index) do
+      raise ArgumentError,
+        message: "Ecto membership predicate has invalid subquery index #{inspect(index)}"
     end
 
     defp membership_field_expressions!(expression) do
@@ -729,6 +766,18 @@ if Code.ensure_loaded?(Ecto) do
     defp selected_field_reference({:selected_field, field}) when is_atom(field),
       do: {:ok, {0, field}}
 
+    defp selected_field_reference({:selected_map_field, key, expression}) do
+      case field_reference(expression) do
+        {:ok, {0, _field}} = reference ->
+          reference
+
+        _ ->
+          raise ArgumentError,
+            message:
+              "Ecto subquery map projection key #{inspect(key)} must select a plain source field"
+      end
+    end
+
     defp selected_field_reference(expression), do: field_reference(expression)
 
     defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
@@ -741,7 +790,7 @@ if Code.ensure_loaded?(Ecto) do
     defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
            expr: {:%{}, _, [_ | _] = entries}
          }) do
-      Enum.map(entries, fn {_key, expression} -> expression end)
+      Enum.map(entries, fn {key, expression} -> {:selected_map_field, key, expression} end)
     end
 
     defp subquery_select_expressions!(%Ecto.Query.SelectExpr{
@@ -869,11 +918,35 @@ if Code.ensure_loaded?(Ecto) do
     defp rebind_type(value, _binding), do: value
 
     defp simple_shape!(queryable, opts) do
-      normalized_queryable = normalize_electric_casts(queryable)
+      normalized_queryable =
+        queryable |> normalize_electric_casts() |> validate_filter_fragments!()
 
       normalized_queryable
       |> EctoAdapter.shape!(opts)
       |> cast_string_enum_columns(normalized_queryable)
+    end
+
+    defp validate_filter_fragments!(%Query{} = query) do
+      Enum.each(query.wheres, &validate_filter_fragments!(&1.expr, 0))
+      query
+    end
+
+    defp validate_filter_fragments!(queryable), do: queryable
+
+    defp validate_filter_fragments!(expression, binding) do
+      Macro.prewalk(expression, fn
+        {:fragment, _, [fragment]}
+        when is_list(fragment) or (is_tuple(fragment) and tuple_size(fragment) == 3) ->
+          raise ArgumentError,
+            message:
+              "Ecto filter on binding #{binding} uses a keyword or interpolated fragment; " <>
+                "Phoenix.Sync supports positional SQL fragments that Electric can evaluate"
+
+        expression ->
+          expression
+      end)
+
+      :ok
     end
 
     defp normalize_electric_casts(%Query{from: %{source: {_table, schema}}} = query)
@@ -956,7 +1029,16 @@ if Code.ensure_loaded?(Ecto) do
       end)
     end
 
-    defp field_source(schema, field), do: schema.__schema__(:field_source, field) |> to_string()
+    defp field_source(schema, field) do
+      case schema.__schema__(:field_source, field) do
+        nil ->
+          raise ArgumentError,
+            message: "Unknown Ecto field #{inspect(field)} on #{inspect(schema)}"
+
+        source ->
+          to_string(source)
+      end
+    end
 
     defp quote_table(%{table: table, prefix: nil}), do: quote_identifier(table)
 

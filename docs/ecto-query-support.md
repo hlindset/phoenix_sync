@@ -58,7 +58,8 @@ Phoenix.Sync pushes the local predicate into the relationship subquery's
 `WHERE`. It also preserves a direct association's `where:` metadata as a
 related-table predicate. A non-key predicate involving both sides remains
 unsupported. Many-to-many join-table predicates remain outside the direct
-relationship model.
+relationship model, so `many_to_many` and through-association joins must be
+written as explicit schema joins when each relationship is representable.
 
 Ecto subqueries compile to Electric's native `IN (SELECT ...)` grammar when
 they are:
@@ -110,7 +111,9 @@ PostgreSQL spelling and remain subject to Electric's supported cast matrix.
 
 The client adapter already renders other native Ecto functions and fragments.
 Electric still validates them, so a PostgreSQL function merely being
-deterministic does not imply that Electric implements it.
+deterministic does not imply that Electric implements it. Positional fragments
+are passed through that validation; keyword and interpolated fragments are
+rejected locally with the affected Ecto binding in the error.
 
 ## Sometimes reducible, but not generally supported
 
@@ -146,10 +149,6 @@ different execution layer:
 These queries should continue to raise a focused `ArgumentError`. Silently
 dropping clauses would produce a shape whose membership diverges from the Ecto
 query as rows change.
-
-## Suggested priority
-
-1. More precise diagnostics for unusual fragments and constructed query ASTs.
 
 True lateral joins, arbitrary outer joins, joined projections, and aggregates
 should remain explicit non-goals until Electric exposes matching live-query
