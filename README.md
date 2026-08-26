@@ -443,6 +443,11 @@ from episode in Episode,
   select: episode
 ```
 
+Boolean expressions may combine root and relationship predicates using `and`,
+`or`, and `not`, including predicates added with `or_where/3`. Each atomic
+predicate must still compare values from one table; direct comparisons between
+columns on different bindings are rejected.
+
 The result remains a live set of `Episode` rows. Joined rows are used to decide
 membership but are not returned as a joined tuple or preloaded association
 graph.

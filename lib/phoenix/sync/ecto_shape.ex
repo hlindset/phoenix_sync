@@ -35,11 +35,15 @@ if Code.ensure_loaded?(Ecto) do
     def shape!(queryable, opts), do: simple_shape!(queryable, opts)
 
     defp relationship_shape!(query, opts) do
-      validate_boolean_operators!(query)
       validate_select!(query)
 
       sources = sources(query)
       edges = relationship_edges(query, sources)
+
+      relationship_shape!(query, opts, edges, sources, mixed_boolean_predicates?(query))
+    end
+
+    defp relationship_shape!(query, opts, edges, sources, false) do
       wheres = wheres_by_binding(query)
       root_wheres = Map.get(wheres, 0, [])
 
@@ -48,6 +52,15 @@ if Code.ensure_loaded?(Ecto) do
       relationship_where = relationship_where(0, edges, wheres, sources)
 
       %{root_shape | where: combine_where([root_shape.where, relationship_where])}
+    end
+
+    defp relationship_shape!(query, opts, edges, sources, true) do
+      root_query = %{query | joins: [], wheres: []}
+      root_shape = simple_shape!(root_query, opts)
+      join_where = relationship_where(0, edges, %{}, sources)
+      predicate_where = boolean_where(query.wheres, edges, sources)
+
+      %{root_shape | where: combine_where([join_where, predicate_where])}
     end
 
     defp validate_query!(query) do
@@ -104,13 +117,10 @@ if Code.ensure_loaded?(Ecto) do
       aggregate?
     end
 
-    defp validate_boolean_operators!(query) do
-      if Enum.any?(query.wheres, &(&1.op != :and)) do
-        raise ArgumentError,
-          message:
-            "Ecto OR across separate where clauses cannot be represented by relationship " <>
-              "subqueries. Put same-table OR expressions in one where clause."
-      end
+    defp mixed_boolean_predicates?(query) do
+      Enum.any?(query.wheres, fn where ->
+        where.op != :and or MapSet.size(binding_references(where.expr)) > 1
+      end)
     end
 
     defp validate_select!(%Query{select: nil}), do: :ok
@@ -326,6 +336,105 @@ if Code.ensure_loaded?(Ecto) do
       bindings
     end
 
+    defp boolean_where([], _edges, _sources), do: nil
+
+    defp boolean_where([where | wheres], edges, sources) do
+      initial = boolean_expression(where.expr, where, edges, sources)
+
+      Enum.reduce(wheres, initial, fn where, expression ->
+        combine_boolean(
+          expression,
+          where.op,
+          boolean_expression(where.expr, where, edges, sources)
+        )
+      end)
+    end
+
+    defp boolean_expression({operator, _, [left, right]}, where, edges, sources)
+         when operator in [:and, :or] do
+      combine_boolean(
+        boolean_expression(left, where, edges, sources),
+        operator,
+        boolean_expression(right, where, edges, sources)
+      )
+    end
+
+    defp boolean_expression({:not, _, [expression]}, where, edges, sources) do
+      ["NOT (", boolean_expression(expression, where, edges, sources), ")"]
+      |> IO.iodata_to_binary()
+    end
+
+    defp boolean_expression(expression, where, edges, sources) do
+      case MapSet.to_list(binding_references(expression)) do
+        [] ->
+          expression_where(0, expression, where, sources)
+
+        [binding] ->
+          binding
+          |> expression_where(expression, where, sources)
+          |> relationship_predicate(binding, edges, sources)
+
+        bindings ->
+          raise ArgumentError,
+            message:
+              "An Ecto predicate references multiple Ecto bindings #{inspect(bindings)}. " <>
+                "Electric relationship predicates must compare values from one table at a time."
+      end
+    end
+
+    defp combine_boolean(left, operator, right) do
+      ["(", left, ") ", boolean_operator(operator), " (", right, ")"]
+      |> IO.iodata_to_binary()
+    end
+
+    defp boolean_operator(:and), do: "AND"
+    defp boolean_operator(:or), do: "OR"
+
+    defp expression_where(binding, expression, where, sources) do
+      source = sources[binding]
+      query = source.schema |> Ecto.Queryable.to_query() |> put_source(source)
+
+      query
+      |> Map.put(:wheres, [where |> narrow_where(expression) |> rebind_where(binding)])
+      |> simple_shape!([])
+      |> Map.fetch!(:where)
+    end
+
+    defp narrow_where(where, expression) do
+      indexes = parameter_indexes(expression)
+      replacements = indexes |> Enum.with_index() |> Map.new()
+
+      expression =
+        Macro.prewalk(expression, fn
+          {:^, meta, [index]} -> {:^, meta, [Map.fetch!(replacements, index)]}
+          expression -> expression
+        end)
+
+      %{where | expr: expression, params: Enum.map(indexes, &Enum.fetch!(where.params, &1))}
+    end
+
+    defp parameter_indexes(expression) do
+      {_expression, indexes} =
+        Macro.prewalk(expression, MapSet.new(), fn
+          {:^, _, [index]} = expression, indexes ->
+            {expression, MapSet.put(indexes, index)}
+
+          expression, indexes ->
+            {expression, indexes}
+        end)
+
+      Enum.sort(indexes)
+    end
+
+    defp relationship_predicate(where, 0, _edges, _sources), do: where
+
+    defp relationship_predicate(where, binding, edges, sources) do
+      edge = Enum.find(edges, &(&1.child == binding))
+      where = relationship_subquery(edge, sources[binding], where)
+
+      relationship_predicate(where, edge.parent, edges, sources)
+    end
+
     defp relationship_where(parent, edges, wheres, sources) do
       edges
       |> Enum.filter(&(&1.parent == parent))
@@ -335,19 +444,26 @@ if Code.ensure_loaded?(Ecto) do
         where = combine_where([child_where, nested_where])
         source = sources[edge.child]
 
-        [
-          quote_field_tuple(edge.parent_fields),
-          " IN (SELECT ",
-          Enum.map_join(edge.child_fields, ", ", &quote_identifier/1),
-          " FROM ",
-          quote_table(source),
-          if(where, do: [" WHERE ", where], else: []),
-          ")"
-        ]
-        |> IO.iodata_to_binary()
+        relationship_subquery(edge, source, where)
       end)
       |> combine_where()
     end
+
+    defp relationship_subquery(edge, source, where) do
+      [
+        quote_field_tuple(edge.parent_fields),
+        " IN (SELECT ",
+        Enum.map_join(edge.child_fields, ", ", &quote_identifier/1),
+        " FROM ",
+        quote_table(source),
+        where_clause(where),
+        ")"
+      ]
+      |> IO.iodata_to_binary()
+    end
+
+    defp where_clause(where) when where in [nil, ""], do: []
+    defp where_clause(where), do: [" WHERE ", where]
 
     defp source_where(binding, wheres, sources) do
       case Map.get(wheres, binding, []) do

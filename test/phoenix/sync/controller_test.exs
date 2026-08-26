@@ -112,6 +112,19 @@ defmodule Phoenix.Sync.ControllerTest do
 
       sync_render(conn, params, query)
     end
+
+    def relationship_boolean(conn, %{"title" => title} = params) do
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id,
+          where: episode.title == ^title or board.active == false,
+          select: episode
+
+      sync_render(conn, params, query)
+    end
   end
 
   defmodule Router do
@@ -145,6 +158,10 @@ defmodule Phoenix.Sync.ControllerTest do
     get "/relationship-join",
         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
         :relationship
+
+    get "/relationship-boolean",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :relationship_boolean
   end
 
   defmodule Endpoint do
@@ -409,6 +426,22 @@ defmodule Phoenix.Sync.ControllerTest do
                resp.resp_body
                |> Jason.decode!()
                |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+    end
+
+    @tag relationship: true
+    test "supports mixed-binding Ecto boolean predicates", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/relationship-boolean", %{offset: "-1", title: "mine"})
+
+      assert resp.status == 200
+
+      assert ["inactive", "mine"] ==
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+               |> Enum.map(&get_in(&1, ["value", "title"]))
+               |> Enum.sort()
     end
 
     test "allows for ecto queries", _ctx do

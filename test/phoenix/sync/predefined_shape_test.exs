@@ -274,6 +274,51 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE ("active" = TRUE))|
     end
 
+    test "preserves mixed-binding boolean expressions" do
+      import Ecto.Query
+
+      title = "mine"
+      active = true
+      blocked_user_id = "blocked"
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          join: membership in Membership,
+          on: board.id == membership.board_id,
+          where:
+            episode.title == ^title or
+              (board.active == ^active and not (membership.user_id == ^blocked_user_id)),
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~ ~s|("title" = 'mine')|
+      assert shape.where =~ ") OR ("
+      assert shape.where =~ ~s|("active" = TRUE)|
+      assert shape.where =~ ~s|NOT (|
+      assert shape.where =~ ~s|("user_id" = 'blocked')|
+    end
+
+    test "preserves or_where across Ecto bindings" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          where: episode.published == false,
+          or_where: board.active == true,
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where =~ ~s|("published" = FALSE)|
+      assert shape.where =~ ~s| OR |
+      assert shape.where =~ ~s|("active" = TRUE)|
+    end
+
     test "rejects join predicates that compare data beyond the relationship key" do
       import Ecto.Query
 
