@@ -324,10 +324,6 @@ defmodule Phoenix.Sync.Electric do
     end
   end
 
-  defp embedded_children(_env, :disabled, _opts) do
-    {:ok, []}
-  end
-
   defp embedded_children(env, mode, opts) do
     electric_children(env, mode, opts)
   end

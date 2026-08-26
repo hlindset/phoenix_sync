@@ -83,6 +83,7 @@ defmodule Phoenix.Sync.ApplicationTest do
 
     test "disabled mode" do
       refute capture_log(fn ->
+               assert {:ok, []} = Phoenix.Sync.Electric.children(:prod, mode: :disabled)
                assert {:ok, []} = App.children(mode: :disabled)
              end) =~ ~r/No `env` specified for :phoenix_sync: defaulting to `:prod`/
     end
