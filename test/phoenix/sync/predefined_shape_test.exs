@@ -259,6 +259,26 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
                ~s|("board_id", "tenant_id") IN (SELECT "id", "tenant_id" FROM "boards" WHERE ("active" = TRUE))|
     end
 
+    test "pushes joined-binding ON filters into relationship subqueries" do
+      import Ecto.Query
+
+      active = true
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id and
+              board.active == ^active,
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|("board_id", "tenant_id") IN (SELECT "id", "tenant_id" FROM "boards" WHERE ("active" = TRUE))|
+    end
+
     test "converts Ecto association joins into relationship subqueries" do
       import Ecto.Query
 

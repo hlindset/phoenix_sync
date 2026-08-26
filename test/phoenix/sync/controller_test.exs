@@ -125,6 +125,19 @@ defmodule Phoenix.Sync.ControllerTest do
 
       sync_render(conn, params, query)
     end
+
+    def relationship_on_filter(conn, params) do
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id and
+              board.active == true,
+          select: episode
+
+      sync_render(conn, params, query)
+    end
   end
 
   defmodule Router do
@@ -162,6 +175,10 @@ defmodule Phoenix.Sync.ControllerTest do
     get "/relationship-boolean",
         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
         :relationship_boolean
+
+    get "/relationship-on-filter",
+        Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+        :relationship_on_filter
   end
 
   defmodule Endpoint do
@@ -437,6 +454,22 @@ defmodule Phoenix.Sync.ControllerTest do
       assert resp.status == 200
 
       assert ["inactive", "mine"] ==
+               resp.resp_body
+               |> Jason.decode!()
+               |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+               |> Enum.map(&get_in(&1, ["value", "title"]))
+               |> Enum.sort()
+    end
+
+    @tag relationship: true
+    test "supports joined-binding ON filters", _ctx do
+      resp =
+        Phoenix.ConnTest.build_conn()
+        |> Phoenix.ConnTest.get("/relationship-on-filter", %{offset: "-1"})
+
+      assert resp.status == 200
+
+      assert ["mine", "theirs"] ==
                resp.resp_body
                |> Jason.decode!()
                |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))

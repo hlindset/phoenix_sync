@@ -182,7 +182,7 @@ if Code.ensure_loaded?(Ecto) do
                 inspect(join.qual)
         end
 
-        {parent_binding, parent_fields, child_fields} =
+        {parent_binding, parent_fields, child_fields, filter} =
           relationship_fields!(join, child_binding, sources)
 
         %{
@@ -190,7 +190,8 @@ if Code.ensure_loaded?(Ecto) do
           parent_fields:
             Enum.map(parent_fields, &field_source(sources[parent_binding].schema, &1)),
           child: child_binding,
-          child_fields: Enum.map(child_fields, &field_source(sources[child_binding].schema, &1))
+          child_fields: Enum.map(child_fields, &field_source(sources[child_binding].schema, &1)),
+          where: join_filter_where(filter, join.on, child_binding, sources)
         }
       end)
     end
@@ -201,23 +202,35 @@ if Code.ensure_loaded?(Ecto) do
            sources
          ) do
       association = association!(sources[parent].schema, association, parent)
-      {parent, [association.owner_key], [association.related_key]}
+      {parent, [association.owner_key], [association.related_key], nil}
     end
 
-    defp relationship_fields!(%{assoc: {_parent, _association}, source: nil}, binding, _sources) do
-      raise ArgumentError,
-        message:
-          "Ecto association join binding #{binding} has an additional ON predicate. " <>
-            "Put joined-table predicates in a where clause."
+    defp relationship_fields!(
+           %{assoc: {parent, association}, source: nil, on: %{expr: filter}},
+           child_binding,
+           sources
+         ) do
+      association = association!(sources[parent].schema, association, parent)
+      filter = join_filter!(filter, child_binding)
+
+      {parent, [association.owner_key], [association.related_key], filter}
     end
 
     defp relationship_fields!(join, child_binding, _sources) do
-      relationships =
+      {relationships, filters} =
         join.on.expr
-        |> equality_fields!(child_binding)
-        |> Enum.map(&orient_relationship!(&1, child_binding))
+        |> conjunction_parts()
+        |> Enum.reduce({[], []}, fn expression, {relationships, filters} ->
+          case relationship_equality(expression, child_binding) do
+            {:ok, relationship} ->
+              {[relationship | relationships], filters}
 
-      case Enum.group_by(relationships, &elem(&1, 0)) |> Map.to_list() do
+            :error ->
+              {relationships, [join_filter!(expression, child_binding) | filters]}
+          end
+        end)
+
+      case relationships |> Enum.reverse() |> Enum.group_by(&elem(&1, 0)) |> Map.to_list() do
         [{parent_binding, relationships}] ->
           {parent_fields, child_fields} =
             Enum.map(relationships, fn {_parent_binding, parent_field, child_field} ->
@@ -225,7 +238,7 @@ if Code.ensure_loaded?(Ecto) do
             end)
             |> Enum.unzip()
 
-          {parent_binding, parent_fields, child_fields}
+          {parent_binding, parent_fields, child_fields, combine_and(Enum.reverse(filters))}
 
         _relationships ->
           raise ArgumentError,
@@ -233,6 +246,65 @@ if Code.ensure_loaded?(Ecto) do
               "Ecto join binding #{child_binding} must equate its fields with fields from " <>
                 "one earlier binding"
       end
+    end
+
+    defp relationship_equality({:==, _, [left, right]}, child_binding) do
+      with {:ok, {left_binding, left_field}} <- field_reference(left),
+           {:ok, {right_binding, right_field}} <- field_reference(right) do
+        {:ok,
+         orient_relationship!(
+           {left_binding, left_field, right_binding, right_field},
+           child_binding
+         )}
+      else
+        _ -> :error
+      end
+    end
+
+    defp relationship_equality(_expression, _child_binding), do: :error
+
+    defp join_filter!(expression, child_binding) do
+      case MapSet.to_list(binding_references(expression)) do
+        [] ->
+          expression
+
+        [^child_binding] ->
+          expression
+
+        bindings ->
+          raise ArgumentError,
+            message:
+              "Ecto join binding #{child_binding} has an ON filter referencing bindings " <>
+                "#{inspect(bindings)}. ON filters may reference only the joined binding."
+      end
+    end
+
+    defp conjunction_parts({:and, _, [left, right]}) do
+      conjunction_parts(left) ++ conjunction_parts(right)
+    end
+
+    defp conjunction_parts(expression), do: [expression]
+
+    defp combine_and([]), do: nil
+    defp combine_and([expression]), do: expression
+
+    defp combine_and([expression | expressions]) do
+      Enum.reduce(expressions, expression, &{:and, [], [&2, &1]})
+    end
+
+    defp join_filter_where(nil, _on, _child_binding, _sources), do: nil
+
+    defp join_filter_where(filter, on, child_binding, sources) do
+      where = %Ecto.Query.BooleanExpr{
+        op: :and,
+        expr: on.expr,
+        params: on.params,
+        subqueries: [],
+        file: on.file,
+        line: on.line
+      }
+
+      expression_where(child_binding, filter, where, sources)
     end
 
     defp orient_relationship!(
@@ -271,33 +343,6 @@ if Code.ensure_loaded?(Ecto) do
           raise ArgumentError,
             message: "Unknown Ecto association #{inspect(field)} on #{inspect(schema)}"
       end
-    end
-
-    defp equality_fields!({:and, _, [left, right]}, binding) do
-      equality_fields!(left, binding) ++ equality_fields!(right, binding)
-    end
-
-    defp equality_fields!(
-           {:==, _, [left, right]} = expression,
-           binding
-         ) do
-      with {:ok, {left_binding, left_field}} <- field_reference(left),
-           {:ok, {right_binding, right_field}} <- field_reference(right) do
-        [{left_binding, left_field, right_binding, right_field}]
-      else
-        _ ->
-          raise ArgumentError,
-            message:
-              "Ecto join binding #{binding} must use field equalities joined with AND, got: " <>
-                inspect(expression)
-      end
-    end
-
-    defp equality_fields!(expression, binding) do
-      raise ArgumentError,
-        message:
-          "Ecto join binding #{binding} must use field equalities joined with AND, got: " <>
-            inspect(expression)
     end
 
     defp field_reference({{:., _, [{:&, _, [binding]}, field]}, _, []}) when is_atom(field),
@@ -450,6 +495,8 @@ if Code.ensure_loaded?(Ecto) do
     end
 
     defp relationship_subquery(edge, source, where) do
+      where = combine_where([edge.where, where])
+
       [
         quote_field_tuple(edge.parent_fields),
         " IN (SELECT ",

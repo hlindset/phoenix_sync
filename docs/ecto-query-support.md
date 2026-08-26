@@ -19,6 +19,7 @@ Phoenix.Sync currently supports:
 - nested relationship joins;
 - composite joins whose field equalities all connect the new binding to the
   same earlier binding;
+- additional `on` predicates that reference only the newly joined binding;
 - per-table predicates combined across bindings with `and`, `or`, and `not`;
 - Ecto's separate `where` and `or_where` clauses; and
 - schema prefixes and database field-source names.
@@ -37,6 +38,18 @@ form:
 The query must still select root-table rows. Joined tuples, computed joined
 maps, and association preload graphs are not shape results.
 
+An explicit or `assoc/2` join can combine its relationship equalities with a
+predicate on the newly joined table:
+
+```elixir
+join: board in Board,
+on: episode.board_id == board.id and board.archived == false
+```
+
+Phoenix.Sync pushes the local predicate into the relationship subquery's
+`WHERE`. A non-key predicate involving both sides remains unsupported, as do
+filters declared in association metadata.
+
 `order_by`, `limit`, and `offset` are available for on-demand subset snapshots,
 not as continuously maintained live-shape ordering or pagination. They are
 therefore deliberately rejected when attached to the live Ecto query itself.
@@ -45,23 +58,6 @@ therefore deliberately rejected when attached to the live Ecto query itself.
 
 The following additions fit Electric's existing model and are reasonable
 targets for the Ecto compiler.
-
-### Additional join `on` filters
-
-An explicit join can contain relationship equalities plus predicates that
-reference only the newly joined table:
-
-```elixir
-join: board in Board,
-on: episode.board_id == board.id and board.archived == false
-```
-
-The relationship equality can remain the membership key while the local
-predicate is pushed into the subquery `WHERE`. Predicates involving values from
-both sides would remain unsupported.
-
-Association-level filters could use the same translation where Ecto exposes
-them as predicates on the related table.
 
 ### Constrained Ecto subqueries
 
@@ -130,8 +126,8 @@ query as rows change.
 
 ## Suggested priority
 
-1. Additional single-binding `on` and association filters.
-2. Constrained Ecto `IN (subquery(...))`, including row-valued membership.
+1. Constrained Ecto `IN (subquery(...))`, including row-valued membership.
+2. Association metadata filters.
 3. Safe negative membership with schema-nullability checks.
 4. Additional deterministic expressions and more precise diagnostics.
 
