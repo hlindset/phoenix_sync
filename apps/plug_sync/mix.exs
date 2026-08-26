@@ -7,6 +7,7 @@ defmodule PlugSync.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      aliases: aliases(),
       deps: deps()
     ]
   end
@@ -29,6 +30,17 @@ defmodule PlugSync.MixProject do
       {:electric, "~> 1.7.12", override: true},
       {:phoenix_sync, [path: "../..", override: true]},
       {:igniter, "~> 0.8.3"}
+    ]
+  end
+
+  defp aliases do
+    [
+      "ecto.reset.quiet": [
+        "ecto.drop --quiet",
+        "ecto.create --quiet",
+        "ecto.migrate --quiet"
+      ],
+      test: ["ecto.reset.quiet", "test"]
     ]
   end
 end
