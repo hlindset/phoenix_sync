@@ -9,18 +9,19 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
   defmodule MockFetch do
     def validate_opts(opts), do: {:ok, opts}
 
-    def fetch(request, parent: parent) do
+    def fetch(request, opts) do
+      parent = Keyword.fetch!(opts, :parent)
       send(parent, {:fetch_request, request})
 
       %Electric.Client.Fetch.Response{
         status: 200,
-        headers: %{},
+        headers: Keyword.get(opts, :response_headers, %{}),
         body: ["[]"]
       }
     end
   end
 
-  test "forwards request headers to sync server" do
+  test "forwards safe request headers without credentials or hop-by-hop headers" do
     {:ok, client} =
       Electric.Client.new(
         base_url: "elixir://#{inspect(__MODULE__.Fetch)}",
@@ -34,6 +35,24 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
       |> Plug.Conn.put_req_header("my-header-1", "my-header-1-value-1")
       |> Plug.Conn.prepend_req_headers([{"my-header-1", "my-header-1-value-2"}])
       |> Plug.Conn.put_req_header("my-header-2", "my-header-2-value")
+      |> Plug.Conn.put_req_header("authorization", "Bearer browser-credential")
+      |> Plug.Conn.put_req_header("cookie", "session=browser-cookie")
+      |> Plug.Conn.put_req_header("proxy-authenticate", "Basic realm=browser")
+      |> Plug.Conn.put_req_header("proxy-authorization", "Basic proxy-credential")
+      |> Plug.Conn.put_req_header("connection", "Keep-Alive, X-Private-Connection")
+      |> Plug.Conn.prepend_req_headers([{"connection", "X-Second-Private"}])
+      |> Plug.Conn.put_req_header("content-length", "123")
+      |> Plug.Conn.put_req_header("keep-alive", "timeout=5")
+      |> Plug.Conn.put_req_header("proxy-connection", "keep-alive")
+      |> Plug.Conn.put_req_header("te", "trailers")
+      |> Plug.Conn.put_req_header("trailer", "x-checksum")
+      |> Plug.Conn.put_req_header("x-private-connection", "private")
+      |> Plug.Conn.put_req_header("x-second-private", "also-private")
+      |> Plug.Conn.put_req_header("transfer-encoding", "chunked")
+      |> Plug.Conn.put_req_header("upgrade", "websocket")
+      |> then(fn conn ->
+        %{conn | req_headers: [{"host", "browser.example"} | conn.req_headers]}
+      end)
 
     assert %{status: 200} = Phoenix.Sync.Adapter.PlugApi.call(adapter, conn, %{offset: -1})
     assert_receive {:fetch_request, request}
@@ -42,6 +61,55 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
              "my-header-1" => ["my-header-1-value-1", "my-header-1-value-2"],
              "my-header-2" => ["my-header-2-value"]
            }
+  end
+
+  test "returns safe upstream headers without cookies or hop-by-hop headers" do
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "elixir://#{inspect(__MODULE__.Fetch)}",
+        fetch:
+          {MockFetch,
+           parent: self(),
+           response_headers: %{
+             "cache-control" => ["public, max-age=5"],
+             "electric-offset" => ["1_0"],
+             "connection" => ["Keep-Alive, X-Private-Connection", "X-Second-Private"],
+             "content-length" => ["123"],
+             "keep-alive" => ["timeout=5"],
+             "proxy-authenticate" => ["Basic realm=upstream"],
+             "proxy-authorization" => ["Basic upstream-proxy-credential"],
+             "proxy-connection" => ["keep-alive"],
+             "x-private-connection" => ["private"],
+             "x-second-private" => ["also-private"],
+             "set-cookie" => ["electric_session=secret"],
+             "set-cookie2" => ["electric_legacy_session=secret"],
+             "te" => ["trailers"],
+             "trailer" => ["x-checksum"],
+             "transfer-encoding" => ["chunked"],
+             "upgrade" => ["websocket"]
+           }}
+      )
+
+    adapter = %ClientAdapter{client: client}
+
+    response = Phoenix.Sync.Adapter.PlugApi.call(adapter, conn(:get, "/v1/shapes"), %{offset: -1})
+
+    assert Plug.Conn.get_resp_header(response, "cache-control") == ["public, max-age=5"]
+    assert Plug.Conn.get_resp_header(response, "electric-offset") == ["1_0"]
+    assert Plug.Conn.get_resp_header(response, "connection") == []
+    assert Plug.Conn.get_resp_header(response, "content-length") == []
+    assert Plug.Conn.get_resp_header(response, "keep-alive") == []
+    assert Plug.Conn.get_resp_header(response, "proxy-authenticate") == []
+    assert Plug.Conn.get_resp_header(response, "proxy-authorization") == []
+    assert Plug.Conn.get_resp_header(response, "proxy-connection") == []
+    assert Plug.Conn.get_resp_header(response, "x-private-connection") == []
+    assert Plug.Conn.get_resp_header(response, "x-second-private") == []
+    assert Plug.Conn.get_resp_header(response, "set-cookie") == []
+    assert Plug.Conn.get_resp_header(response, "set-cookie2") == []
+    assert Plug.Conn.get_resp_header(response, "te") == []
+    assert Plug.Conn.get_resp_header(response, "trailer") == []
+    assert Plug.Conn.get_resp_header(response, "transfer-encoding") == []
+    assert Plug.Conn.get_resp_header(response, "upgrade") == []
   end
 
   test "forwards subset parameters for server-defined shapes" do
@@ -111,6 +179,10 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
         conn
         |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
         |> Plug.Conn.put_resp_header("electric-offset", "1_0")
+        |> Plug.Conn.put_resp_header("connection", "keep-alive, x-private-connection")
+        |> Plug.Conn.put_resp_header("keep-alive", "timeout=5")
+        |> Plug.Conn.put_resp_header("x-private-connection", "private")
+        |> Plug.Conn.put_resp_header("set-cookie", "electric_session=secret")
         |> Plug.Conn.send_chunked(200)
 
       {:ok, conn} =
@@ -160,6 +232,10 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
     assert response.state == :chunked
     assert Plug.Conn.get_resp_header(response, "content-type") == ["text/event-stream"]
     assert Plug.Conn.get_resp_header(response, "electric-offset") == ["1_0"]
+    assert Plug.Conn.get_resp_header(response, "connection") == []
+    assert Plug.Conn.get_resp_header(response, "keep-alive") == []
+    assert Plug.Conn.get_resp_header(response, "x-private-connection") == []
+    assert Plug.Conn.get_resp_header(response, "set-cookie") == []
 
     assert response.resp_body ==
              "data: {\"headers\":{\"operation\":\"insert\"},\"key\":\"things/1\",\"value\":{\"transformed\":true,\"value\":1}}\n\n: keep-alive\n\n"

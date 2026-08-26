@@ -9,6 +9,19 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     alias Phoenix.Sync.Electric.HttpPost
     alias Phoenix.Sync.PredefinedShape
 
+    @hop_by_hop_headers ~w(
+      connection
+      keep-alive
+      proxy-authenticate
+      proxy-authorization
+      proxy-connection
+      te
+      trailer
+      transfer-encoding
+      upgrade
+    )
+    @request_filtered_headers ~w(authorization content-length cookie host) ++ @hop_by_hop_headers
+    @response_filtered_headers ~w(content-length set-cookie set-cookie2) ++ @hop_by_hop_headers
     @subset_body_keys ~w(where order_by limit offset params where_expr order_by_expr)
 
     def predefined_shape(sync_client, %PredefinedShape{} = predefined_shape) do
@@ -228,7 +241,7 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
       response
       |> Req.Response.to_map()
       |> Map.fetch!(:headers)
-      |> Enum.reject(fn {name, _value} -> name == "transfer-encoding" end)
+      |> filter_headers(@response_filtered_headers)
       |> then(&Plug.Conn.merge_resp_headers(conn, &1))
     end
 
@@ -260,7 +273,9 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
 
     defp put_req_headers(request, headers) do
       merged_headers =
-        Enum.reduce(headers, request.headers, fn {header, value}, acc ->
+        headers
+        |> filter_headers(@request_filtered_headers)
+        |> Enum.reduce(request.headers, fn {header, value}, acc ->
           Map.update(acc, header, [value], fn existing -> [value | List.wrap(existing)] end)
         end)
 
@@ -270,16 +285,43 @@ defmodule Phoenix.Sync.Electric.ClientAdapter do
     defp put_resp_headers(conn, headers) do
       resp_headers =
         headers
-        |> Map.delete("transfer-encoding")
-        |> expand_headers()
+        |> filter_headers(@response_filtered_headers)
 
       Plug.Conn.merge_resp_headers(conn, resp_headers)
     end
 
-    # turn headers into a list which is more compatible than a map
-    # representation as it preserves multiple values for a header.
-    defp expand_headers(headers) when is_map(headers) do
-      Enum.flat_map(headers, fn {k, v} -> Enum.map(List.wrap(v), &{k, &1}) end)
+    defp filter_headers(headers, filtered_headers) do
+      filtered_headers =
+        headers
+        |> connection_headers()
+        |> MapSet.union(MapSet.new(filtered_headers))
+
+      headers
+      |> expand_headers()
+      |> Enum.reject(fn {name, _value} ->
+        MapSet.member?(filtered_headers, String.downcase(name))
+      end)
     end
+
+    defp connection_headers(headers) do
+      for {name, values} <- headers,
+          String.downcase(name) == "connection",
+          value <- List.wrap(values),
+          token <- String.split(value, ","),
+          into: MapSet.new() do
+        token
+        |> String.trim()
+        |> String.downcase()
+      end
+    end
+
+    # Turn headers into a list to preserve repeated values across Req and Plug.
+    defp expand_headers(headers) when is_map(headers) do
+      Enum.flat_map(headers, fn {name, values} ->
+        Enum.map(List.wrap(values), &{name, &1})
+      end)
+    end
+
+    defp expand_headers(headers) when is_list(headers), do: headers
   end
 end

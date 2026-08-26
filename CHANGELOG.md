@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevent browser credentials, cookies and HTTP hop-by-hop headers from crossing
+  the Electric HTTP proxy boundary in either direction.
 - Return focused Ecto compiler errors for malformed subquery indexes, bindings,
   projections, association joins, and fragments.
 - Forward HTTP request options, including custom Finch pools, to the Electric client.
