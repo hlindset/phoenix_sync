@@ -869,9 +869,46 @@ if Code.ensure_loaded?(Ecto) do
     defp rebind_type(value, _binding), do: value
 
     defp simple_shape!(queryable, opts) do
-      queryable
+      normalized_queryable = normalize_electric_casts(queryable)
+
+      normalized_queryable
       |> EctoAdapter.shape!(opts)
-      |> cast_string_enum_columns(queryable)
+      |> cast_string_enum_columns(normalized_queryable)
+    end
+
+    defp normalize_electric_casts(%Query{from: %{source: {_table, schema}}} = query)
+         when is_atom(schema) do
+      wheres =
+        Enum.map(query.wheres, fn where ->
+          %{where | expr: normalize_electric_casts(where.expr, schema)}
+        end)
+
+      %{query | wheres: wheres}
+    end
+
+    defp normalize_electric_casts(queryable), do: queryable
+
+    defp normalize_electric_casts(expression, schema) do
+      Macro.prewalk(expression, fn
+        {:type, meta, [value, target]} = expression ->
+          if electric_string_cast_target?(target, schema),
+            do: text_cast(value, meta),
+            else: expression
+
+        expression ->
+          expression
+      end)
+    end
+
+    defp electric_string_cast_target?(:string, _schema), do: true
+
+    defp electric_string_cast_target?({0, field}, schema) when is_atom(field),
+      do: schema.__schema__(:type, field) == :string
+
+    defp electric_string_cast_target?(_target, _schema), do: false
+
+    defp text_cast(value, meta) do
+      {:fragment, meta, [{:raw, "("}, {:expr, value}, {:raw, "::text)"}]}
     end
 
     defp cast_string_enum_columns(%ShapeDefinition{where: nil} = shape, _queryable), do: shape

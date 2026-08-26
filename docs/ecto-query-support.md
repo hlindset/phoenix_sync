@@ -15,6 +15,8 @@ Phoenix.Sync currently supports:
 
 - root-table filters supported by `Electric.Client.EctoAdapter`;
 - pinned parameters and string-backed `Ecto.Enum` predicates;
+- Electric-compatible Ecto filter expressions, including arithmetic,
+  comparisons, `coalesce/2`, and `type/2` casts supported by Electric;
 - explicit and `assoc/2` inner equi-joins;
 - direct-association `where:` metadata on `belongs_to`, `has_one`, and
   `has_many` relationship joins;
@@ -98,17 +100,17 @@ left-hand row fragment.
 not as continuously maintained live-shape ordering or pagination. They are
 therefore deliberately rejected when attached to the live Ecto query itself.
 
-## Feasible future compiler support
+## Filter expression compatibility
 
-The following additions fit Electric's existing model and are reasonable
-targets for the Ecto compiler.
+Ecto's `:string` type normally generates a PostgreSQL `varchar` cast, but
+Electric cannot evaluate every cast into `varchar`. Phoenix.Sync normalizes
+`type(expression, :string)` and field-derived string targets to the equivalent
+unbounded `text` cast, which Electric can evaluate. Other casts retain Ecto's
+PostgreSQL spelling and remain subject to Electric's supported cast matrix.
 
-### More deterministic filter expressions
-
-The Ecto adapter can grow coverage for deterministic functions, casts, and
-fragments that Electric's filter evaluator already understands. Each expression
-must be checked against Electric rather than forwarding arbitrary SQL. Better
-errors should identify the unsupported expression and binding.
+The client adapter already renders other native Ecto functions and fragments.
+Electric still validates them, so a PostgreSQL function merely being
+deterministic does not imply that Electric implements it.
 
 ## Sometimes reducible, but not generally supported
 
@@ -147,7 +149,7 @@ query as rows change.
 
 ## Suggested priority
 
-1. Additional deterministic expressions and more precise diagnostics.
+1. More precise diagnostics for unusual fragments and constructed query ASTs.
 
 True lateral joins, arbitrary outer joins, joined projections, and aggregates
 should remain explicit non-goals until Electric exposes matching live-query

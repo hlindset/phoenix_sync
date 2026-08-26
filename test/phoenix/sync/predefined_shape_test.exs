@@ -229,6 +229,69 @@ defmodule Phoenix.Sync.PredefinedShapeTest do
       assert shape.where =~ ~s|'"breed"'|
     end
 
+    test "converts Ecto type/2 to an Electric-compatible cast" do
+      import Ecto.Query
+
+      query = from(cow in Cow, where: type(cow.age, :string) == "7")
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where == ~s|(("age"::text) = '7')|
+
+      assert {:ok, _expression} =
+               Electric.Replication.Eval.Parser.parse_and_validate_expression(shape.where,
+                 refs: %{["age"] => :int8}
+               )
+    end
+
+    test "converts field-typed string parameters to Electric text casts" do
+      import Ecto.Query
+
+      name = "Daisy"
+      query = from(cow in Cow, where: type(^name, cow.name) == cow.name)
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where == ~s|(('Daisy'::text) = "name")|
+
+      assert {:ok, _expression} =
+               Electric.Replication.Eval.Parser.parse_and_validate_expression(shape.where,
+                 refs: %{
+                   ["name"] => :text
+                 }
+               )
+    end
+
+    test "preserves Electric-supported deterministic Ecto functions" do
+      import Ecto.Query
+
+      query = from(cow in Cow, where: coalesce(cow.name, "unknown") == "Daisy")
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where == ~s|(coalesce("name", 'unknown') = 'Daisy')|
+
+      assert {:ok, _expression} =
+               Electric.Replication.Eval.Parser.parse_and_validate_expression(shape.where,
+                 refs: %{
+                   ["name"] => :text
+                 }
+               )
+    end
+
+    test "normalizes Electric-compatible casts on joined bindings" do
+      import Ecto.Query
+
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on: episode.board_id == board.id,
+          where: type(board.tenant_id, :string) == "7",
+          select: episode
+
+      shape = query |> PredefinedShape.new!() |> PredefinedShape.to_shape()
+
+      assert shape.where ==
+               ~s|"board_id" IN (SELECT "id" FROM "boards" WHERE (("tenant_id"::text) = '7'))|
+    end
+
     test "converts inner equi-joins into relationship subqueries" do
       import Ecto.Query
 
