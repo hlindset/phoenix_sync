@@ -452,6 +452,9 @@ The result remains a live set of `Episode` rows. Joined rows are used to decide
 membership but are not returned as a joined tuple or preloaded association
 graph.
 
+See [Ecto query support](docs/ecto-query-support.md) for the full capability
+matrix, feasible future compiler work, and Electric's query-language boundary.
+
 `order_by`, `limit`, `offset`, `group_by`, aggregates, distinct results, and
 preloads cannot remain correct as a row-level Electric shape and are rejected
 instead of being silently ignored. Ordering and limiting initial data are
@@ -474,8 +477,8 @@ sync "/incomplete-todos", Todos.Todo, where: "completed = false", replica: :full
 ```
 
 Electric relationship shapes can keep rows selected through another table in
-sync. Define these with Electric's native single-column `IN` or `NOT IN`
-subquery syntax:
+sync. Define these with Electric's native single-value or row-valued `IN` and
+`NOT IN` subquery syntax:
 
 ```elixir
 sync "/visible-episodes",

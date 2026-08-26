@@ -101,7 +101,7 @@ defmodule Phoenix.Sync.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md", "LICENSE"],
+      extras: ["README.md", "docs/ecto-query-support.md", "LICENSE"],
       before_closing_head_tag: docs_before_closing_head_tag()
     ]
   end
