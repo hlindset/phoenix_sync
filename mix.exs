@@ -2,7 +2,7 @@ defmodule Phoenix.Sync.MixProject do
   use Mix.Project
 
   # Remember to update the README when you change the version
-  @version "0.6.1"
+  @version "0.7.0"
   @electric_version "~> 1.7.12"
 
   def project do
@@ -18,8 +18,8 @@ defmodule Phoenix.Sync.MixProject do
       docs: docs(),
       package: package(),
       description: description(),
-      source_url: "https://github.com/electric-sql/phoenix_sync",
-      homepage_url: "https://hexdocs.pm/phoenix_sync",
+      source_url: "https://github.com/hlindset/phoenix_sync",
+      homepage_url: "https://github.com/hlindset/phoenix_sync",
       aliases: aliases(),
       preferred_cli_env: ["test.all": :test, "test.apps": :test]
     ]
@@ -48,7 +48,7 @@ defmodule Phoenix.Sync.MixProject do
       {:ecto_sql, "~> 3.10", optional: true},
       # electric_client 0.10.x has not yet published an Electric 1.7-compatible
       # optional dependency bound. Remove the override once it does.
-      {:electric, @electric_version, optional: true, override: true},
+      {:electric, @electric_version, only: [:dev, :test], optional: true, override: true},
       {:electric_client, "~> 0.10.3"},
       {:igniter, "~> 0.8.3", optional: true}
     ] ++ deps_for_env(Mix.env()) ++ json_deps()
@@ -122,10 +122,11 @@ defmodule Phoenix.Sync.MixProject do
   defp package do
     [
       links: %{
-        "Source code" => "https://github.com/electric-sql/phoenix_sync"
+        "Source code" => "https://github.com/hlindset/phoenix_sync"
       },
       licenses: ["Apache-2.0"],
-      files: ~w(lib priv .formatter.exs mix.exs README.md LICENSE)
+      files:
+        ~w(lib priv docs/ecto-query-support.md docs/phoenix-sync.png .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 

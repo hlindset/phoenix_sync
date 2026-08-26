@@ -6,7 +6,7 @@ Real-time sync for Postgres-backed [Phoenix](https://www.phoenixframework.org/) 
   <a href="https://hexdocs.pm/phoenix_sync" target="_blank">
     <picture>
       <img alt="Phoenix sync illustration"
-          src="https://github.com/electric-sql/phoenix_sync/raw/main/docs/phoenix-sync.png"
+          src="https://github.com/hlindset/phoenix_sync/raw/main/docs/phoenix-sync.png"
       />
     </picture>
   </a>
@@ -15,7 +15,7 @@ Real-time sync for Postgres-backed [Phoenix](https://www.phoenixframework.org/) 
 [![Hex.pm](https://img.shields.io/hexpm/v/phoenix_sync.svg)](https://hex.pm/packages/phoenix_sync)
 [![Documentation](https://img.shields.io/badge/docs-hexdocs-green)](https://hexdocs.pm/phoenix_sync)
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](./LICENSE)
-[![Status](https://img.shields.io/badge/status-beta-orange)](https://github.com/electric-sql/phoenix_sync)
+[![Status](https://img.shields.io/badge/status-beta-orange)](https://github.com/hlindset/phoenix_sync)
 [![Discord](https://img.shields.io/discord/933657521581858818?color=5969EA&label=discord)](https://discord.electric-sql.com)
 
 Documentation is available at [hexdocs.pm/phoenix_sync](https://hexdocs.pm/phoenix_sync).
@@ -249,7 +249,7 @@ Example config:
 defp deps do
   [
     {:electric, "~> 1.7.12", override: true},
-    {:phoenix_sync, "~> 0.6"}
+    {:phoenix_sync, "~> 0.7"}
   ]
 end
 
@@ -280,7 +280,7 @@ release widens that constraint.
 # mix.exs
 defp deps do
   [
-    {:phoenix_sync, "~> 0.6"}
+    {:phoenix_sync, "~> 0.7"}
   ]
 end
 
@@ -311,7 +311,7 @@ It is also possible to include Electric as an application dependency and configu
 defp deps do
   [
     {:electric, "~> 1.7.12", override: true},
-    {:phoenix_sync, "~> 0.6"}
+    {:phoenix_sync, "~> 0.7"}
   ]
 end
 
@@ -350,7 +350,7 @@ With Electric only included and compiled as a dependency in `:dev` and `:test`.
 defp deps do
   [
     {:electric, "~> 1.7.12", only: [:dev, :test], override: true},
-    {:phoenix_sync, "~> 0.6"}
+    {:phoenix_sync, "~> 0.7"}
   ]
 end
 

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-08-26
 
 ### Added
 
@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Serve Electric subset snapshots through GET and POST predefined shape routes.
 - Apply predefined row transforms to subset snapshot data.
 - Support native Electric relationship/subquery shapes, including move-out deletes.
+- Compile Ecto inner, association, nested and composite relationship joins into
+  Electric membership subqueries.
+- Preserve mixed-binding `and`, `or`, `not`, `where` and `or_where` predicates
+  in relationship queries.
 - Stream Electric server-sent events through predefined shape routes.
 - Make JSON shape responses eligible for negotiated HTTP compression.
 
@@ -21,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Update the embedded Electric sync service to `1.7.12` and the Elixir client to `0.10.3`.
 - Update the generated TanStack DB app to `@electric-sql/client` `1.5.26` and compatible TanStack DB packages.
+- Require Elixir 1.18 and update Req to `0.8.0-rc.0`, using `Req.stream/4`
+  for server-sent event proxying.
+- Update Igniter to `0.8.3` and test generated Phoenix applications against
+  `phx_new` `1.7.24`.
 - Align sandbox stack startup, snapshot responses and transaction metadata with Electric 1.7.
 
 ### Fixed
