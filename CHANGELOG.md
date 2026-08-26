@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Match proxied POST subset request content types to their JSON-encoded bodies.
 - Wait for embedded shapes to become replication-ready before returning
   `offset=now` or subset responses.
 - Prevent browser credentials, cookies and HTTP hop-by-hop headers from crossing

@@ -18,6 +18,7 @@ defmodule Phoenix.Sync.Electric.HttpPost do
       client
       |> Client.authenticate_request(request)
       |> Electric.Client.Fetch.HTTP.build_request(fetch_opts)
+      |> Req.Request.delete_header("content-type")
 
     request
     |> Req.merge(post_options(request, body))

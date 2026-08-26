@@ -113,6 +113,31 @@ defmodule Phoenix.Sync.ControllerTest do
       sync_render(conn, params, query)
     end
 
+    def relationship_subset(conn, %{"user_id" => user_id} = params) do
+      query =
+        from episode in Episode,
+          join: board in Board,
+          on:
+            episode.board_id == board.id and
+              episode.tenant_id == board.tenant_id,
+          join: membership in Membership,
+          on:
+            board.id == membership.board_id and
+              board.tenant_id == membership.tenant_id,
+          where: board.active == true,
+          where: membership.user_id == ^user_id,
+          select: episode
+
+      columns = ~w(id board_id tenant_id title)
+
+      sync_render(conn, params, query,
+        columns: columns,
+        queryable_columns: columns,
+        replica: :full,
+        log: :changes_only
+      )
+    end
+
     def relationship_boolean(conn, %{"title" => title} = params) do
       query =
         from episode in Episode,
@@ -221,6 +246,10 @@ defmodule Phoenix.Sync.ControllerTest do
         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
         :relationship
 
+    post "/relationship-subset",
+         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
+         :relationship_subset
+
     get "/relationship-boolean",
         Elixir.Phoenix.Sync.ControllerTest.PredicateController,
         :relationship_boolean
@@ -244,6 +273,11 @@ defmodule Phoenix.Sync.ControllerTest do
 
   defmodule Endpoint do
     use Phoenix.Endpoint, otp_app: :phoenix_sync
+
+    plug Plug.Parsers,
+      parsers: [:urlencoded, :multipart, :json],
+      pass: ["*/*"],
+      json_decoder: Phoenix.json_library()
 
     plug Router
   end
@@ -504,6 +538,82 @@ defmodule Phoenix.Sync.ControllerTest do
                resp.resp_body
                |> Jason.decode!()
                |> Enum.filter(&match?(%{"headers" => %{"operation" => "insert"}}, &1))
+    end
+
+    @tag relationship: true
+    test "re-encodes multipart subset requests as JSON before proxying", ctx do
+      parent = self()
+
+      plug = fn conn ->
+        raw_body = conn |> Req.Test.raw_body() |> IO.iodata_to_binary()
+        send(parent, {:upstream_post, conn.method, conn.req_headers, Jason.decode!(raw_body)})
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.put_resp_header("electric-handle", "episodes-handle")
+        |> Plug.Conn.put_resp_header("electric-offset", "3_0")
+        |> Plug.Conn.put_resp_header("connection", "keep-alive, x-private-connection")
+        |> Plug.Conn.put_resp_header("x-private-connection", "private")
+        |> Plug.Conn.put_resp_header("set-cookie", "electric_session=secret")
+        |> Plug.Conn.send_resp(200, Jason.encode!(%{"metadata" => %{}, "data" => []}))
+      end
+
+      electric_opts =
+        ctx.electric_opts
+        |> Keyword.put(:mode, :http)
+        |> Keyword.put(:url, "http://electric.test")
+        |> Keyword.put(:request_opts, plug: plug)
+
+      Phoenix.Config.put(
+        ctx.endpoint,
+        :phoenix_sync,
+        Phoenix.Sync.Application.plug_opts(electric_opts)
+      )
+
+      response =
+        Task.async(fn ->
+          Phoenix.ConnTest.build_conn()
+          |> Plug.Conn.put_req_header("authorization", "Bearer browser-credential")
+          |> Plug.Conn.put_req_header("cookie", "session=browser-cookie")
+          |> Plug.Conn.put_req_header("x-csrf-token", "csrf-token")
+          |> Plug.Conn.put_req_header("connection", "keep-alive, x-private-connection")
+          |> Plug.Conn.put_req_header("x-private-connection", "private")
+          |> Phoenix.ConnTest.post(
+            "/relationship-subset?offset=-1",
+            %{
+              "user_id" => "user-1",
+              "where" => "title = $1",
+              "params" => ["mine"],
+              "limit" => 1
+            }
+          )
+        end)
+        |> await_task!(1_000)
+
+      assert_receive {:upstream_post, "POST", headers, body}
+
+      assert {"content-type", content_type} =
+               Enum.find(headers, fn {name, _value} -> name == "content-type" end)
+
+      assert content_type == "application/json"
+      assert {"x-csrf-token", "csrf-token"} in headers
+      refute Enum.any?(headers, fn {name, _value} -> name == "authorization" end)
+      refute Enum.any?(headers, fn {name, _value} -> name == "cookie" end)
+      refute Enum.any?(headers, fn {name, _value} -> name == "connection" end)
+      refute Enum.any?(headers, fn {name, _value} -> name == "x-private-connection" end)
+
+      assert body == %{
+               "where" => "title = $1",
+               "params" => ["mine"],
+               "limit" => 1
+             }
+
+      assert response.status == 200
+      assert Plug.Conn.get_resp_header(response, "electric-handle") == ["episodes-handle"]
+      assert Plug.Conn.get_resp_header(response, "electric-offset") == ["3_0"]
+      assert Plug.Conn.get_resp_header(response, "connection") == []
+      assert Plug.Conn.get_resp_header(response, "x-private-connection") == []
+      assert Plug.Conn.get_resp_header(response, "set-cookie") == []
     end
 
     @tag relationship: true
@@ -1040,6 +1150,26 @@ defmodule Phoenix.Sync.ControllerTest do
       assert [%{"headers" => %{"control" => "must-refetch"}}] = Jason.decode!(response.resp_body)
 
       assert [] = ShapeRequestRegistry.registered_requests()
+    end
+  end
+
+  defp await_task!(task, timeout) do
+    case Task.yield(task, timeout) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        flunk("controller request exited: #{Exception.format_exit(reason)}")
+
+      nil ->
+        stacktrace =
+          case Process.info(task.pid, :current_stacktrace) do
+            {:current_stacktrace, stacktrace} -> Exception.format_stacktrace(stacktrace)
+            nil -> "process exited before its stack could be captured"
+          end
+
+        Task.shutdown(task, :brutal_kill)
+        flunk("controller request exceeded #{timeout}ms:\n#{stacktrace}")
     end
   end
 end
