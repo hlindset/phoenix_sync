@@ -124,6 +124,43 @@ defmodule Phoenix.Sync.ElectricTest do
     forward "/shapes",
       to: Phoenix.Sync.Electric,
       init_opts: [opts_in_assign: :config]
+
+    forward "/v1/shape",
+      to: Phoenix.Sync.Electric,
+      init_opts: [opts_in_assign: :config]
+  end
+
+  defmodule HttpProxyRouter do
+    use Plug.Router, copy_opts_to_assign: :config
+    use Phoenix.Sync.Router, opts_in_assign: :config
+
+    plug :match
+    plug :dispatch
+
+    sync "/things",
+      table: "things",
+      queryable_columns: ["id", "value"],
+      log: :changes_only
+  end
+
+  defmodule HttpProxyPlug do
+    @behaviour Plug
+
+    @impl Plug
+    def init(opts), do: opts
+
+    @impl Plug
+    def call(conn, opts) do
+      conn = HttpProxyRouter.call(conn, opts)
+
+      send(
+        Keyword.fetch!(opts, :test_pid),
+        {:proxy_request_finished, conn.request_path,
+         URI.decode_query(conn.query_string)["live_sse"]}
+      )
+
+      conn
+    end
   end
 
   defp call(conn, plug \\ MyEnv.TestRouter, ctx) do
@@ -139,6 +176,21 @@ defmodule Phoenix.Sync.ElectricTest do
       start_supervised!(
         {Bandit, plug: {MyEnv.TestRouter, plug_opts}, port: 0, startup_log: false}
       )
+
+    {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
+    "http://127.0.0.1:#{port}"
+  end
+
+  defp start_http_proxy(ctx, upstream_url) do
+    electric_opts =
+      ctx.electric_opts
+      |> Keyword.put(:mode, :http)
+      |> Keyword.put(:url, upstream_url)
+
+    plug_opts = [phoenix_sync: Phoenix.Sync.plug_opts(electric_opts), test_pid: self()]
+
+    pid =
+      start_supervised!({Bandit, plug: {HttpProxyPlug, plug_opts}, port: 0, startup_log: false})
 
     {:ok, {_address, port}} = ThousandIsland.listener_info(pid)
     "http://127.0.0.1:#{port}"
@@ -292,6 +344,69 @@ defmodule Phoenix.Sync.ElectricTest do
                %{"headers" => %{"operation" => "insert"}, "value" => %{"value" => "three"}},
                %{"headers" => %{"control" => "snapshot-end"}}
              ] = response.body |> :zlib.gunzip() |> Jason.decode!()
+    end
+
+    test "proxies POST subsets and live SSE over real HTTP connections", ctx do
+      upstream_url = start_bandit(ctx)
+      proxy_url = start_http_proxy(ctx, upstream_url)
+
+      subset =
+        Req.post!(proxy_url <> "/things",
+          params: [offset: "now"],
+          json: %{order_by: "id DESC", limit: 1},
+          raw: true
+        )
+
+      assert subset.status == 200
+      assert [_handle] = Req.Response.get_header(subset, "electric-handle")
+      assert [_offset] = Req.Response.get_header(subset, "electric-offset")
+
+      assert ["application/json; charset=utf-8"] =
+               Req.Response.get_header(subset, "content-type")
+
+      assert %{"data" => [%{"value" => %{"value" => "three"}}]} =
+               Jason.decode!(subset.body)
+
+      initial =
+        Req.get!(proxy_url <> "/things",
+          params: [offset: "now"],
+          raw: true
+        )
+
+      assert [handle] = Req.Response.get_header(initial, "electric-handle")
+      assert [offset] = Req.Response.get_header(initial, "electric-offset")
+
+      Postgrex.query!(ctx.db_conn, "INSERT INTO things (value) VALUES ('four')", [])
+
+      request =
+        Req.new(
+          url: proxy_url <> "/things",
+          params: [offset: offset, handle: handle, live: "true", live_sse: "true"],
+          raw: true,
+          retry: false,
+          receive_timeout: 5_000
+        )
+
+      assert {:ok, response, body} =
+               Req.stream(request, "", fn data, _response, body ->
+                 body = body <> data
+
+                 case String.contains?(body, ~s|"value":"four"|) do
+                   true -> {:halt, body}
+                   false -> {:cont, body}
+                 end
+               end)
+
+      assert response.status == 200
+      assert ["text/event-stream"] = Req.Response.get_header(response, "content-type")
+      assert [_offset] = Req.Response.get_header(response, "electric-offset")
+      assert body =~ "data: "
+      assert body =~ ~s|"operation":"insert"|
+      assert body =~ ~s|"value":"four"|
+
+      Postgrex.query!(ctx.db_conn, "INSERT INTO things (value) VALUES ('five')", [])
+
+      assert_receive {:proxy_request_finished, "/things", "true"}, 5_000
     end
   end
 
