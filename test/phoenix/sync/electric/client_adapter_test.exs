@@ -241,6 +241,56 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
              "data: {\"headers\":{\"operation\":\"insert\"},\"key\":\"things/1\",\"value\":{\"transformed\":true,\"value\":1}}\n\n: keep-alive\n\n"
   end
 
+  test "passes malformed SSE data frames through without invoking transforms" do
+    plug = fn conn ->
+      conn =
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
+        |> Plug.Conn.send_chunked(200)
+
+      {:ok, conn} = Plug.Conn.chunk(conn, "data: {not-json}\n\n")
+      conn
+    end
+
+    shape_adapter =
+      http_shape_adapter!(plug,
+        transform: fn _message -> raise "malformed frames must not be transformed" end
+      )
+
+    response =
+      Phoenix.Sync.Adapter.PlugApi.call(
+        shape_adapter,
+        conn(:get, "/things"),
+        %{
+          "offset" => "0_inf",
+          "handle" => "things-1",
+          "live" => "true",
+          "live_sse" => "true"
+        }
+      )
+
+    assert response.status == 200
+    assert response.resp_body == "data: {not-json}\n\n"
+  end
+
+  test "raises an upstream SSE transport failure before sending a response" do
+    plug = fn conn -> Req.Test.transport_error(conn, :timeout) end
+    shape_adapter = http_shape_adapter!(plug)
+
+    assert_raise Req.TransportError, fn ->
+      Phoenix.Sync.Adapter.PlugApi.call(
+        shape_adapter,
+        conn(:get, "/things"),
+        %{
+          "offset" => "0_inf",
+          "handle" => "things-1",
+          "live" => "true",
+          "live_sse" => "true"
+        }
+      )
+    end
+  end
+
   test "does not allow requests to widen configured queryable columns" do
     {:ok, client} =
       Electric.Client.new(
@@ -329,5 +379,52 @@ defmodule Phoenix.Sync.Electric.ClientAdapterTest do
     refute Map.has_key?(query, "where")
     assert {"x-phoenix-auth", "allowed"} in headers
     assert Enum.any?(headers, fn {name, _value} -> name == "electric-mock-auth" end)
+  end
+
+  test "returns non-success POST subset responses without transforming them" do
+    plug = fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("content-type", "application/json")
+      |> Plug.Conn.put_resp_header("electric-offset", "7_0")
+      |> Plug.Conn.send_resp(422, Jason.encode!(%{"message" => "invalid subset"}))
+    end
+
+    shape_adapter =
+      http_shape_adapter!(plug,
+        transform: fn message -> put_in(message, ["transformed"], true) end
+      )
+
+    body = %{"where" => "missing = true", "limit" => 20}
+
+    request_conn =
+      conn(:post, "/things?offset=-1", Jason.encode!(body))
+      |> Plug.Conn.put_req_header("content-type", "application/json")
+      |> Plug.Conn.fetch_query_params()
+      |> Map.put(:body_params, body)
+
+    response =
+      Phoenix.Sync.Adapter.PlugApi.call(
+        shape_adapter,
+        request_conn,
+        Map.merge(request_conn.query_params, body)
+      )
+
+    assert response.status == 422
+    assert Plug.Conn.get_resp_header(response, "electric-offset") == ["7_0"]
+    assert Jason.decode!(response.resp_body) == %{"message" => "invalid subset"}
+  end
+
+  defp http_shape_adapter!(plug, shape_opts \\ []) do
+    {:ok, client} =
+      Electric.Client.new(
+        base_url: "http://electric.test",
+        fetch: {Electric.Client.Fetch.HTTP, request: [plug: plug, raw: true]}
+      )
+
+    adapter = %ClientAdapter{client: client}
+    shape = PredefinedShape.new!("things", shape_opts)
+
+    {:ok, shape_adapter} = Phoenix.Sync.Adapter.PlugApi.predefined_shape(adapter, shape)
+    shape_adapter
   end
 end
