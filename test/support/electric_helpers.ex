@@ -68,8 +68,14 @@ defmodule Support.ElectricHelpers do
     }
 
     storage =
-      {Electric.ShapeCache.InMemoryStorage,
-       stack_id: stack_id, table_base_name: :"in_memory_storage_#{stack_id}"}
+      case ctx do
+        %{electric_storage: :persistent, tmp_dir: storage_dir} ->
+          {Electric.ShapeCache.PureFileStorage, stack_id: stack_id, storage_dir: storage_dir}
+
+        _ctx ->
+          {Electric.ShapeCache.InMemoryStorage,
+           stack_id: stack_id, table_base_name: :"in_memory_storage_#{stack_id}"}
+      end
 
     publication_name = "electric_test_pub_#{:erlang.phash2(stack_id)}"
 
